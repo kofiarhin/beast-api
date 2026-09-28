@@ -1,0 +1,8 @@
+{
+  "projects": [
+    { "name": "Beast", "workspace": "/home/ubuntu/projects/beast" },
+    { "name": "DevKofi", "workspace": "/home/ubuntu/projects/devkofi" },
+    { "name": "IdeaHub API", "workspace": "/home/ubuntu/projects/ideahub-api" },
+    { "name": "LeadRadar", "workspace": "/home/ubuntu/projects/leadradar" }
+  ]
+}
