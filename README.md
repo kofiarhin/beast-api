@@ -11,9 +11,16 @@ ChatGPT → Linear ticket → label "Beast Ready" → Linear webhook → Beast A
   → verify result → comment on Linear
 ```
 
-> **Scope of this version: local only.** DNS, Nginx, TLS, firewall rules, public ports, PM2
-> startup, the real Linear webhook registration and production deployment are **not** part of this
-> implementation. Beast binds to `127.0.0.1` only.
+> **Production status:** Beast API is deployed on the Beast VPS. The Node process remains bound to
+> `127.0.0.1:3100`; Nginx/TLS exposes only `POST /webhooks/linear` at
+> `beast-api.devkofi.com`. Local health and job-status endpoints are not public.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md) — components, execution path, registry, queue, agent and verification boundaries.
+- [Linear workflow](docs/LINEAR-WORKFLOW.md) — how an issue becomes an authorized Beast job and how results return to Linear.
+- [Operations](docs/OPERATIONS.md) — production layout, health checks, logs, restart rules and troubleshooting.
+- [Security](docs/SECURITY.md) — trust boundaries, secrets, workspace protection and production permissions.
 
 ---
 
@@ -317,7 +324,7 @@ content; persistence and restart recovery; log redaction.
 
 ## Safety boundaries (summary)
 
-- Binds to `127.0.0.1` only; no public exposure in this version.
+- The Node service binds to `127.0.0.1` only; Nginx publicly exposes only the signed Linear webhook route.
 - No execution without a valid signature, a fresh timestamp and the ready label.
 - One agent at a time; one active job per issue.
 - Agents only run in registered, existing, clean Git repositories under `/home/ubuntu/projects`.
