@@ -16,11 +16,11 @@ Linear issue
   -> FIFO queue
   -> clean-workspace validation
   -> fresh coding-agent process
-  -> read-only verification
+  -> Git inspection + project verification commands
   -> Linear result comment
 ```
 
-The webhook request path stays fast. It validates and enqueues; the worker performs slow work after the HTTP request returns.
+The webhook validates and enqueues without waiting for the coding job. When configured, it awaits a Linear API issue read first. The worker handles agent execution and project verification separately.
 
 ## Main components
 
@@ -38,7 +38,9 @@ The webhook request path stays fast. It validates and enqueues; the worker perfo
 
 `config/projects.json` is the allowlist. Beast never derives or guesses a filesystem path from a Linear issue. A project must resolve exactly to a registered workspace under `BEAST_WORKSPACE_ROOT`.
 
-Before execution, the workspace must exist, resolve inside the workspace root, be the top-level Git repository, and have a clean working tree. A failure blocks the job without changing the repository.
+Before execution, the workspace must exist, resolve inside the workspace root, be the top-level Git repository, and have a clean working tree. A failure blocks the job without changing the repository. These checks do not establish that it is the intended application repository.
+
+The shipped Beast mapping targets `/home/ubuntu/projects/beast` (VPS documentation), not Beast API source. API work requires a verified development checkout and separately approved routing; do not infer the checkout from the production directory. See [LINEAR-WORKFLOW.md](LINEAR-WORKFLOW.md).
 
 ## Agent boundary
 
@@ -54,10 +56,14 @@ Queued jobs can resume after a normal restart. A job that was still working when
 
 ## Verification
 
-After a normal agent exit, Beast captures Git status and changed files, checks whether HEAD moved, and runs configured npm verification scripts when they exist. Verification is observational: Beast does not clean, reset, stash, or commit the workspace.
+After the agent returns, Beast captures Git status and HEAD, then runs configured npm verification scripts when available. Git helpers only inspect state; the npm scripts run as host child processes outside the Codex sandbox and can modify files. They inherit the host environment except the two filtered Linear credentials. Use trusted scripts. The recorded Git snapshot is from before those scripts; Beast does not capture it again afterward.
+
+Missing package metadata, scripts or dependencies cause checks to be skipped. Skipped checks count as passing, including when every check is skipped. HEAD movement is a warning only. A successful agent exit without an agent error, timeout or cancellation produces a completed job even if verification fails or the plain-text summary says work is incomplete.
+
+Review the final workspace, actual checks and acceptance criteria. Local completion is not proof of task success, Linear Done, merge or deployment. [IDE-65](https://linear.app/ideahub-devkofi/issue/IDE-65) tracks the pending completion/reporting improvements.
 
 ## Production boundary
 
-The Node process binds only to `127.0.0.1:3100`. Nginx is the public boundary and exposes only `POST /webhooks/linear`. Local health and job-status endpoints are intentionally not public.
+Node is hard-bound to loopback; 3100 is the default configurable port. The repository Nginx template exposes only `POST /webhooks/linear`. The dated VPS profile records HTTPS proxying to `127.0.0.1:3100`; current runtime and TLS configuration require live verification. See OPERATIONS.md for the evidence boundary.
 
 See [OPERATIONS.md](OPERATIONS.md), [LINEAR-WORKFLOW.md](LINEAR-WORKFLOW.md), and [SECURITY.md](SECURITY.md).

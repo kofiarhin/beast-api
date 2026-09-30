@@ -11,9 +11,11 @@ ChatGPT → Linear ticket → label "Beast Ready" → Linear webhook → Beast A
   → verify result → comment on Linear
 ```
 
-> **Production status:** Beast API is deployed on the Beast VPS. The Node process remains bound to
-> `127.0.0.1:3100`; Nginx/TLS exposes only `POST /webhooks/linear` at
-> `beast-api.devkofi.com`. Local health and job-status endpoints are not public.
+> **Documented production baseline:** The [2026-09-28 VPS profile](https://github.com/kofiarhin/beast/blob/main/VPS-Beast-AI-Agent-Profile.md)
+> records Beast API under PM2 with HTTPS proxying to `127.0.0.1:3100`.
+> The repository's Nginx template exposes only `POST /webhooks/linear`; health and job-status
+> routes are intended to remain local. This is dated evidence, not a current live check.
+> Verify the active configuration and deployed revision before production work.
 
 ## Documentation
 
@@ -52,13 +54,14 @@ src/
     store.ts             JSON-file persistence (jobs + webhook deliveries)
     worker.ts            single-concurrency worker
   verify/verify.ts       post-run inspection (git status, changed files, checks)
-  util/exec.ts           child process runner (no shell, timeouts, secret-free env)
+  util/exec.ts           child process runner (no shell, timeouts, Linear credential filtering)
 config/projects.json     project registry
 data/                    runtime state (state.json, logs/) — created automatically, git-ignored
 ```
 
-The webhook path and the execution path are fully separated. The webhook handler only
-validates, authorizes and enqueues; the worker does everything slow.
+The webhook handler validates, authorizes and enqueues without waiting for the coding job.
+When configured, it first awaits a Linear API issue read. The worker handles agent execution
+and project verification separately.
 
 ## Endpoints
 
@@ -85,8 +88,8 @@ validates, authorizes and enqueues; the worker does everything slow.
 7. **Authorization** — see below.
 8. **Per-issue lock** — if the issue already has a `queued`/`working` job, the event is ignored.
 9. **Project resolution** — unknown project → a `blocked` job is recorded and reported; no agent.
-10. **Enqueue** — a `queued` job is persisted, a "Queued" comment is posted, the worker is kicked,
-    and the request returns `202` immediately.
+10. **Enqueue** — a `queued` job is persisted, a "Queued" comment is attempted without awaiting
+    delivery, the worker is kicked, and the request returns `202` without waiting for the agent.
 
 The delivery is only recorded as processed after steps 5–10 succeed, so if Linear's API is
 temporarily unreachable Beast returns `500` and Linear's retry is processed normally.
@@ -131,6 +134,14 @@ Resolution is **exact** (case-insensitive name, or `linearProjectId` if pinned).
 matching and no path derivation — Beast never guesses a workspace. An issue with no project or an
 unregistered project is blocked.
 
+**Beast API routing caution:** The shipped `Beast` entry selects
+`/home/ubuntu/projects/beast`, the VPS documentation repository, not Beast API source.
+A registered, clean Git repository can still be the wrong repository for a ticket.
+Before authorizing Beast API coding, verify a clean API development checkout under the
+workspace root and obtain approval for its exact routing. Do not guess the checkout path,
+use the production runtime copy, or silently redirect all Beast documentation tasks.
+[IDE-65](https://linear.app/ideahub-devkofi/issue/IDE-65) tracks the known routing prerequisite.
+
 ### Registering another project
 
 1. Make sure the repo exists at `/home/ubuntu/projects/<dir>` and is a clean Git repository.
@@ -139,7 +150,7 @@ unregistered project is blocked.
    { "name": "My Linear Project Name", "workspace": "/home/ubuntu/projects/my-project" }
    ```
    Optionally add `"linearProjectId": "<uuid>"` so the mapping survives a project rename.
-3. Restart Beast API.
+3. Apply the reviewed registry change and restart Beast API only with explicit approval.
 
 ## Workspace safety
 
@@ -214,8 +225,12 @@ launch agent → verify → mark `completed` or `failed` → post result → nex
 Job states: `queued`, `working`, `blocked`, `failed`, `completed`.
 
 - `failed` = agent could not start, exited non-zero, or timed out.
-- `completed` = agent exited 0. The comment says "Completed locally", or "Completed locally —
-  verification failed" if any check failed.
+- `completed` = agent exited 0 without a reported agent error, timeout or cancellation.
+  Verification failure does not prevent this state. The result comment then says
+  "Completed locally — verification failed".
+- The agent summary is plain text; Beast does not validate it against ticket acceptance
+  criteria or treat a blocked/incomplete summary as a structured outcome.
+- Local completion is not proof of task success, Linear Done, merge or deployment.
 
 ## Verification
 
@@ -226,16 +241,41 @@ After the agent exits, Beast records (without modifying Git state):
 - whether `HEAD` moved (flagged as a warning — the agent should not commit);
 - `npm run <script>` for each of `BEAST_VERIFY_SCRIPTS` (default `test,lint,typecheck,build`)
   that exists in `package.json`. Missing scripts or missing `node_modules` are reported as
-  `skipped`. Scripts run with `CI=true` and a secret-free environment.
+  `skipped`. Scripts run with `CI=true`; only `LINEAR_API_KEY` and
+  `LINEAR_WEBHOOK_SECRET` are removed from the inherited environment.
 
-Nothing is pushed or deployed.
+**Limits of the result:**
+
+- Skipped checks count as passing in the overall calculation. All checks can be skipped and
+  the report can still say "Overall: passed"; this does not prove required checks ran.
+- HEAD movement only produces a warning; it does not make verification fail. The result
+  template still says nothing was committed, pushed or deployed. Treat that sentence as
+  intended policy, not verified evidence of what the agent did.
+- Git inspection is read-only, but npm scripts run as host child processes outside the Codex
+  sandbox. Trusted project scripts may write build output or make other changes.
+- Git status and HEAD are not captured again after those scripts, so their changes are absent
+  from the recorded snapshot. Inspect the final workspace before accepting the result.
+
+Review the diff, agent summary, actual check results and ticket acceptance criteria before
+calling the work complete. [IDE-65](https://linear.app/ideahub-devkofi/issue/IDE-65) tracks the
+completion/reporting improvements; they are not implemented in this version.
 
 ## Linear reporting
 
-Comments are posted for **Queued**, **Working**, **Blocked**, **Failed** and **Completed locally**.
-Each says what happened and ends with a **Next Action**. Completed/failed comments include the
-verification summary. Reporting errors are logged and never break job processing. Without
-`LINEAR_API_KEY`, comments are only logged locally.
+Beast attempts comments for **Queued**, **Working**, **Blocked**, **Failed** and
+**Completed locally**, each ending with a **Next Action**. Result comments include verification
+when available.
+
+Delivery is best-effort. Queued is not awaited, so comments can arrive out of order.
+Working is posted after workspace validation but **before** the agent launch; its "started"
+wording does not prove a process started. A launch failure can follow it.
+
+Reporting failures are logged without a persisted retry. Without `LINEAR_API_KEY`, no comment
+is sent and a local log entry records that reporting is disabled. A missing comment does not
+prove a missing job: inspect local `GET /jobs/:id`, `data/state.json`, and PM2 logs before retrying.
+
+This version does not update Linear issue states or labels, and does not send messages into
+ChatGPT. Those lifecycle improvements remain separate work under IDE-65.
 
 ## Persistence / idempotency
 
@@ -328,5 +368,9 @@ content; persistence and restart recovery; log redaction.
 - No execution without a valid signature, a fresh timestamp and the ready label.
 - One agent at a time; one active job per issue.
 - Agents only run in registered, existing, clean Git repositories under `/home/ubuntu/projects`.
-- Codex is sandboxed to the workspace; Beast's secrets are not passed to it.
-- Beast never commits, stashes, discards, pushes, opens PRs, merges or deploys.
+- Codex is launched with `workspace-write`; Linear API/signing credentials are filtered from
+  child environments. This is not a general credential allowlist.
+- The agent prompt forbids commit/stash/discard/push/PR/merge/deploy and system changes.
+  These policy instructions are not proof that every prohibited action is technically blocked.
+- Beast's Git helpers only inspect state. Host-run project verification scripts are outside
+  the Codex sandbox and must be trusted.

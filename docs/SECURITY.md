@@ -6,7 +6,7 @@ A Linear ticket is not enough to execute code. Beast requires a valid signed web
 
 ## Trust boundaries
 
-**Internet -> Nginx:** only the HTTPS Linear webhook endpoint is public.
+**Internet -> Nginx:** the intended public boundary is the HTTPS Linear webhook endpoint only. The checked-in Nginx file is an HTTP bootstrap template; current live TLS/routing must be verified separately.
 
 **Nginx -> Beast API:** Node listens on loopback only.
 
@@ -16,7 +16,9 @@ A Linear ticket is not enough to execute code. Beast requires a valid signed web
 
 **Workspace -> agent:** only a validated clean top-level Git repository can reach the agent launcher.
 
-**Agent -> host:** Codex runs with workspace-write sandboxing and a restricted environment. Linear credentials are stripped.
+**Agent -> host:** Codex is launched with `workspace-write` sandboxing. Child environments inherit the host environment except `LINEAR_API_KEY` and `LINEAR_WEBHOOK_SECRET`. This filtering is not a general credential allowlist; unrelated credentials may remain.
+
+**Verification -> host:** Beast launches project npm scripts directly as host child processes, outside the Codex sandbox, with the same two credentials filtered. These scripts can write files and run commands with the service user's permissions. Only run trusted project scripts; verification is not a read-only or sandboxed safety boundary.
 
 ## Secrets
 
@@ -36,7 +38,11 @@ Never commit or paste:
 
 Beast refuses dirty workspaces rather than stashing, resetting, discarding, or overwriting existing work. It also warns if the agent moves Git HEAD.
 
-Ordinary execution does not authorize commits, pushes, pull requests, merges, deployment, destructive Git commands, or unrelated file deletion.
+Ordinary execution does not authorize commits, pushes, pull requests, merges, deployment, destructive Git commands, or unrelated file deletion. The agent prompt states these restrictions; do not treat every instruction as a technically enforced prohibition.
+
+HEAD movement only causes a warning and does not fail verification. The completed-result template still says nothing was committed, pushed or deployed, even when HEAD moved. Review actual Git evidence rather than treating that sentence as proof.
+
+Git status and HEAD are captured before npm scripts run, not afterward. All-skipped checks can be reported as passed, and failed checks do not prevent a completed job. Completion is not proof of acceptance or policy compliance. See [LINEAR-WORKFLOW.md](LINEAR-WORKFLOW.md).
 
 ## Process safety
 

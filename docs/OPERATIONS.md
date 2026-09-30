@@ -1,5 +1,9 @@
 # Beast API Operations
 
+## Documented production baseline
+
+The [VPS profile](https://github.com/kofiarhin/beast/blob/main/VPS-Beast-AI-Agent-Profile.md) records Beast API PM2/loopback/HTTPS observations dated 2026-09-28. The paths below also reflect the repository deployment templates. They are not a fresh live check. Verify current process settings, deployed revision and active Nginx/TLS configuration before production work.
+
 ## Production layout
 
 - Application: `/home/ubuntu/apps/beast-api`
@@ -11,11 +15,11 @@
 - Runtime state/log directory: application `data/` directory
 - Registered agent workspaces: under `/home/ubuntu/projects`
 
-The environment file and runtime data are not committed.
+The environment file and runtime data are not committed. Port 3100 and application `data/` are defaults; `PORT` and `BEAST_DATA_DIR` can override them.
 
 ## Public exposure
 
-Nginx terminates HTTPS and proxies only the exact Linear webhook route to the loopback Node service. Other public paths return 404, and non-POST methods on the webhook route are denied. Port 3100 is not a public listener.
+The intended Nginx/TLS topology exposes only the exact Linear webhook route to the loopback Node service. The bootstrap template returns 404 for other paths and denies non-POST methods on the webhook route. Verify the active site before claiming these restrictions hold in production.
 
 The repository contains the Nginx bootstrap configuration in `deploy/nginx-beast-api.devkofi.com.conf`. The live TLS configuration may contain Certbot-managed additions, so the repository file should not be treated as a byte-for-byte copy of the active Nginx site.
 
@@ -59,7 +63,11 @@ Use PM2 logs and the application runtime logs for diagnosis. Never paste secrets
 
 ## Updating the project registry
 
-Changing `config/projects.json` changes where Beast may execute work. Confirm the intended Linear project and exact workspace, verify the repository exists and is clean, review the change, then restart Beast API only after explicit approval.
+The default registry is `config/projects.json`; `BEAST_PROJECTS_FILE` can override it. Changing the active registry changes where Beast may execute work.
+
+The shipped Beast entry points to `/home/ubuntu/projects/beast` (VPS documentation), not Beast API source. A clean Git checkout alone does not prove it is the correct codebase. For API work, first verify the development checkout under the configured workspace root and its repository identity. Do not guess a path, use the production runtime copy, or silently redirect all Beast tasks. IDE-65 tracks this routing prerequisite.
+
+Review the exact change and preserve existing routing. Apply registry changes and restart Beast API only after explicit approval; only then re-add Beast Ready for the intended task.
 
 ## Troubleshooting
 
@@ -71,7 +79,11 @@ Changing `config/projects.json` changes where Beast may execute work. Confirm th
 
 **Agent fails:** inspect the job/PM2 logs for the exit reason, then check Codex availability/authentication and the workspace. Do not automatically retry state-changing work.
 
-**Verification fails:** distinguish failures caused by the agent's changes from pre-existing project failures before deciding the next action.
+**Missing or misleading progress:** comments are best-effort, may arrive out of order and are not retried durably. Working is posted before launch. Check local job state and PM2 logs before re-adding Beast Ready; a missing comment does not mean the job never ran.
+
+**Verification fails or every check is skipped:** completed is an agent-exit outcome, not acceptance of the ticket. Skipped checks count as passing and failed checks do not prevent the completed job state. Inspect the final diff, summary and required checks; distinguish new failures from pre-existing ones before deciding the next action.
+
+**Verification changes files:** project npm scripts run outside the Codex sandbox as host processes. Use trusted scripts and inspect the workspace afterward; the recorded Git status/HEAD snapshot was taken before the scripts.
 
 ## Production changes
 
