@@ -1,0 +1,59 @@
+# Beast API Security Model
+
+## Core rule
+
+A Linear ticket is not enough to execute code. Beast requires a valid signed webhook, a fresh event, an authorized `Beast Ready` transition, an exact registered project, and a safe clean workspace.
+
+## Trust boundaries
+
+**Internet -> Nginx:** the intended public boundary is the HTTPS Linear webhook endpoint only. The checked-in Nginx file is an HTTP bootstrap template; current live TLS/routing must be verified separately.
+
+**Nginx -> Beast API:** Node listens on loopback only.
+
+**Linear -> queue:** HMAC-SHA256 signature validation, timestamp freshness checks, delivery deduplication, event filtering, and ready-label authorization run before enqueueing.
+
+**Queue -> workspace:** only an exact registry mapping can select a workspace. Real paths must remain under the configured workspace root.
+
+**Workspace -> agent:** only a validated clean top-level Git repository can reach the agent launcher.
+
+**Agent -> host:** Codex is launched with `workspace-write` sandboxing. Child environments inherit the host environment except `LINEAR_API_KEY` and `LINEAR_WEBHOOK_SECRET`. This filtering is not a general credential allowlist; unrelated credentials may remain.
+
+**Verification -> host:** Beast launches project npm scripts directly as host child processes, outside the Codex sandbox, with the same two credentials filtered. These scripts can write files and run commands with the service user's permissions. Only run trusted project scripts; verification is not a read-only or sandboxed safety boundary.
+
+## Secrets
+
+Secrets belong in private server configuration, never in Git. The repository intentionally ignores `.env`, runtime data, logs, and build/dependency output.
+
+Never commit or paste:
+- Linear API keys
+- Linear webhook signing secrets
+- tokens or passwords
+- SSH private keys
+- production `.env` values
+- credential-store contents
+
+`.env.example` documents variable names only.
+
+## Repository protection
+
+Beast refuses dirty workspaces rather than stashing, resetting, discarding, or overwriting existing work. It also warns if the agent moves Git HEAD.
+
+Ordinary execution does not authorize commits, pushes, pull requests, merges, deployment, destructive Git commands, or unrelated file deletion. The agent prompt states these restrictions; do not treat every instruction as a technically enforced prohibition.
+
+HEAD movement only causes a warning and does not fail verification. The completed-result template still says nothing was committed, pushed or deployed, even when HEAD moved. Review actual Git evidence rather than treating that sentence as proof.
+
+Git status and HEAD are captured before npm scripts run, not afterward. All-skipped checks can be reported as passed, and failed checks do not prevent a completed job. Completion is not proof of acceptance or policy compliance. See [LINEAR-WORKFLOW.md](LINEAR-WORKFLOW.md).
+
+## Process safety
+
+Only one agent job runs at a time. Agent processes have a configurable timeout. Cancellation, timeout, and graceful shutdown terminate the process group; Beast does not automatically retry state-changing agent runs.
+
+A forced SIGKILL of the Beast service itself cannot perform graceful child cleanup. After abnormal termination, inspect processes and workspace state before retrying.
+
+## Logging
+
+Structured application logs redact fields whose names look secret-like. Request bodies and headers are not logged. Redaction is defense in depth, not permission to place secrets in normal log fields.
+
+## Production permissions
+
+The current Beast Ready workflow is deliberately narrower than full VPS administration. Production deployment, PM2/system changes, Nginx, firewall, DNS, public ports, destructive Git operations, and similar consequential actions require separate explicit approval.
