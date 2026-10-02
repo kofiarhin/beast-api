@@ -14,7 +14,7 @@ Linear is the operational source of truth for Beast work. GitHub is the source o
 8. The job is persisted as queued. Beast attempts a **Queued** comment.
 9. The worker validates the workspace. A dirty, missing, unregistered, or unsafe workspace is blocked.
 10. Beast attempts **Working** before launching the agent; this is not proof that a process started.
-11. A fresh Codex process works only inside the validated workspace.
+11. A fresh agent process (Codex or Claude Code, per `BEAST_AGENT`) works only inside the validated workspace.
 12. Beast inspects the result and runs configured verification scripts.
 13. Beast attempts **Completed locally**, **Completed locally — verification failed**, **Blocked**, or **Failed**, including a Next Action. Delivery is best-effort.
 

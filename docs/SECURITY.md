@@ -16,9 +16,9 @@ A Linear ticket is not enough to execute code. Beast requires a valid signed web
 
 **Workspace -> agent:** only a validated clean top-level Git repository can reach the agent launcher.
 
-**Agent -> host:** Codex is launched with `workspace-write` sandboxing. Child environments inherit the host environment except `LINEAR_API_KEY` and `LINEAR_WEBHOOK_SECRET`. This filtering is not a general credential allowlist; unrelated credentials may remain.
+**Agent -> host:** Codex is launched with `workspace-write` sandboxing. Claude Code is launched with `acceptEdits` and no permission prompts, so file access outside the workspace and Bash commands outside a narrow allowlist (npm test/lint/typecheck/build, read-only Git) are denied; user/project settings, hooks, MCP servers (including Linear) and web tools are disabled, and sessions are not persisted. Its OS sandbox needs `socat`, which is not installed on the VPS, so that layer is currently inactive; the allowlist is what restricts Bash. These rules are defence in depth, not a replacement for the post-run Git approval checks. Child environments inherit the host environment except `LINEAR_API_KEY` and `LINEAR_WEBHOOK_SECRET`. This filtering is not a general credential allowlist; unrelated credentials may remain.
 
-**Verification -> host:** Beast launches project npm scripts directly as host child processes, outside the Codex sandbox, with the same two credentials filtered. These scripts can write files and run commands with the service user's permissions. Only run trusted project scripts; verification is not a read-only or sandboxed safety boundary.
+**Verification -> host:** Beast launches project npm scripts directly as host child processes, outside the agent sandbox, with the same two credentials filtered. These scripts can write files and run commands with the service user's permissions. Only run trusted project scripts; verification is not a read-only or sandboxed safety boundary.
 
 ## Secrets
 

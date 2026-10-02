@@ -1,9 +1,9 @@
 # Beast API
 
 Beast is the automation/orchestration layer on the VPS. It **does not implement tickets itself**.
-It receives authorized Linear tickets and launches a coding agent (Codex CLI today, Claude Code
-later) inside the correct, registered project workspace, then verifies the result and reports back
-to Linear.
+It receives authorized Linear tickets and launches a coding agent (Codex CLI or Claude Code,
+selected by `BEAST_AGENT`) inside the correct, registered project workspace, then verifies the
+result and reports back to Linear.
 
 ```
 ChatGPT → Linear ticket → label "Beast Ready" → Linear webhook → Beast API
@@ -48,6 +48,7 @@ src/
     types.ts             AgentAdapter interface
     index.ts             BEAST_AGENT → adapter selection
     codex.ts             Codex CLI adapter
+    claude.ts            Claude Code CLI adapter
     launcher.ts          the single guarded entry point for launching an agent
     prompt.ts            structured task prompt for the agent
   queue/
@@ -224,16 +225,49 @@ The prompt contains the issue ID/identifier, title, description, project, accept
 may and must not do (no push/PR/merge/deploy/commit/stash, no system config, nothing outside the
 workspace, no unrelated deletions), and the expected verification.
 
-### Adding Claude Code later
+### Claude Code execution
 
-1. Create `src/agents/claude.ts` implementing `AgentAdapter` (e.g. `claude -p` with the prompt on
-   stdin, `cwd` = `request.workspace.path`, restricted permission mode / allowed tools, and
-   `childEnv()` for the environment).
-2. Register it in `ADAPTERS` in `src/agents/index.ts` and remove `claude` from `PLANNED`.
-3. Add adapter tests mirroring `tests/agents.test.ts`.
-4. Set `BEAST_AGENT=claude`.
+With `BEAST_AGENT=claude`, Beast runs a fresh non-interactive process for each job:
 
-Nothing in the webhook, queue, worker, verification or reporting code needs to change.
+```
+claude -p --output-format stream-json --verbose \
+  --permission-mode acceptEdits --permission-prompts none \
+  --tools Bash,Read,Edit,Write,Glob,Grep \
+  --setting-sources "" --settings '<Beast settings JSON>' --strict-mcp-config \
+  --disable-slash-commands --no-session-persistence [--model <BEAST_CLAUDE_MODEL>]
+```
+
+- working directory = the registered workspace; the same structured prompt as Codex is sent on stdin;
+- `LINEAR_API_KEY` and `LINEAR_WEBHOOK_SECRET` are removed from the agent's environment;
+- user, project and local Claude settings are ignored (a repository cannot grant itself
+  permissions), all MCP servers are disabled (including the Linear MCP), hooks are disabled,
+  and web tools are not available;
+- file edits are accepted only inside the workspace. Nobody answers permission prompts, so
+  anything that would need approval is **denied**: Read/Edit/Write outside the workspace, and
+  Bash commands not explicitly allowed;
+- allowed Bash without a prompt: `npm test`, `npm run test|lint|typecheck|build`,
+  `git status|diff|log|show`;
+- denied Bash (`src/agents/claude.ts`): Git commit/push/stash/reset/checkout/switch/restore/clean,
+  branch/tag/remote/ref/config changes, merge/rebase, `gh`, `sudo`, PM2/systemctl/Nginx/certbot/ufw,
+  Docker, deploy CLIs, ssh/scp/rsync; `.env` files may not be read or written;
+- Claude Code's OS sandbox is enabled with no unsandboxed retry. It needs `bubblewrap` and
+  `socat`; on this VPS `socat` is not installed, so Claude Code disables the sandbox (with a
+  warning in the transcript) and other Bash commands are denied, as above;
+- the stream-json transcript is redacted to `data/logs/<jobId>.log`; the final `result` event
+  becomes the Linear summary. An error result (for example max turns) is reported as a failed
+  run even if the CLI exits 0;
+- sessions are not persisted under `~/.claude`; the process group is killed on timeout,
+  cancellation or shutdown, as for Codex.
+
+Claude authenticates with whatever login the service user's Claude Code already has; Beast
+stores no Claude credentials. The permission rules are defence in depth: prefix rules cannot catch
+every spelling of a command, so Beast's post-run Git approval checks and verification still apply
+exactly as they do for Codex.
+
+### Adding another agent
+
+Implement `AgentAdapter`, register it in `ADAPTERS` in `src/agents/index.ts`, and add adapter
+tests. Nothing in the webhook, queue, worker, verification or reporting code needs to change.
 
 ## Queue / worker
 
@@ -326,7 +360,7 @@ never logged.
 | `LINEAR_API_KEY`             | _(empty)_                       | Enables issue fetch + comments                |
 | `LINEAR_WEBHOOK_SECRET`      | _(empty)_                       | Required to accept webhooks                   |
 | `BEAST_READY_LABEL`          | `Beast Ready`                   | Authorization label                           |
-| `BEAST_AGENT`                | `codex`                         | Agent adapter                                 |
+| `BEAST_AGENT`                | `codex`                         | Agent adapter: `codex` or `claude`            |
 | `BEAST_DATA_DIR`             | `./data`                        | State + logs                                  |
 | `BEAST_PROJECTS_FILE`        | `./config/projects.json`        | Registry                                      |
 | `BEAST_WORKSPACE_ROOT`       | `/home/ubuntu/projects`         | Fixed; any other value fails startup          |
@@ -336,6 +370,8 @@ never logged.
 | `BEAST_WEBHOOK_TOLERANCE_MS` | `60000`                         | Max webhook age                               |
 | `BEAST_CODEX_BIN`            | `codex`                         | Codex binary                                  |
 | `BEAST_CODEX_MODEL`          | _(Codex default)_               | Optional model override                       |
+| `BEAST_CLAUDE_BIN`           | `claude`                        | Claude Code binary                            |
+| `BEAST_CLAUDE_MODEL`         | _(Claude Code default)_         | Optional model override                       |
 | `LINEAR_API_URL`             | `https://api.linear.app/graphql`|                                               |
 
 See `.env.example`. Never commit `.env`.
@@ -362,7 +398,7 @@ curl -s -XPOST http://127.0.0.1:3100/webhooks/linear -H 'Content-Type: applicati
   -H "Linear-Signature: $SIG" -H 'Linear-Delivery: test-1' -d "$BODY"
 ```
 
-⚠️ Using a registered project name here **will launch Codex** in that real workspace (if it is clean).
+⚠️ Using a registered project name here **will launch the configured agent** in that real workspace (if it is clean).
 
 ## Testing
 
@@ -380,7 +416,8 @@ returned before the agent finishes; ready-label authorization (including Linear-
 no re-trigger on unrelated updates; duplicate deliveries (also across restart); per-issue lock;
 unknown project blocked; missing workspace / non-Git / dirty repo blocked (dirty changes left
 intact); one job at a time; forged/unregistered workspaces refused by the launcher; symlink escape;
-registry validation; adapter selection; Codex args, cwd, stdin and secret stripping; prompt
+registry validation; adapter selection; Codex and Claude args, cwd, stdin and secret stripping;
+Claude permission settings, result parsing, transcript redaction, cancellation and timeout; prompt
 content; persistence and restart recovery; log redaction.
 
 ## Safety boundaries (summary)
@@ -389,8 +426,9 @@ content; persistence and restart recovery; log redaction.
 - No execution without a valid signature, a fresh timestamp and the ready label.
 - One agent at a time; one active job per issue.
 - Agents only run in registered, existing, clean Git repositories under `/home/ubuntu/projects`.
-- Codex is launched with `workspace-write`; Linear API/signing credentials are filtered from
-  child environments. This is not a general credential allowlist.
+- Codex is launched with `workspace-write`; Claude Code with `acceptEdits`, no permission prompts,
+  ignored settings/MCP servers and a narrow Bash allowlist. Linear API/signing credentials are
+  filtered from child environments. This is not a general credential allowlist.
 - The agent prompt forbids commit/stash/discard/push/PR/merge/deploy and system changes.
   These policy instructions are not proof that every prohibited action is technically blocked.
 - Beast's Git helpers only inspect state. Host-run project verification scripts are outside

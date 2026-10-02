@@ -29,7 +29,7 @@ The webhook validates and enqueues without waiting for the coding job. When conf
 - `src/registry/registry.ts`: exact Linear-project to VPS-workspace mapping.
 - `src/workspace/`: Git and workspace safety checks.
 - `src/queue/`: persistent jobs, webhook deliveries, and the single-concurrency worker.
-- `src/agents/`: replaceable agent interface and Codex adapter.
+- `src/agents/`: replaceable agent interface with Codex and Claude Code adapters.
 - `src/verify/`: post-run Git and npm verification.
 - `src/linear/`: Linear API access and status reporting.
 - `src/logger.ts`: structured logging with secret-like fields redacted.
@@ -44,9 +44,9 @@ The shipped Beast mapping targets `/home/ubuntu/projects/beast` (VPS documentati
 
 ## Agent boundary
 
-`AgentAdapter` keeps orchestration independent from the coding agent. The current adapter launches a fresh Codex CLI process for each job. The agent receives the ticket context and validated workspace, but Linear credentials are removed from its environment.
+`AgentAdapter` keeps orchestration independent from the coding agent. `BEAST_AGENT` selects the adapter (`codex`, the default, or `claude`); either launches one fresh CLI process per job. The agent receives the ticket context and validated workspace, but Linear credentials are removed from its environment.
 
-The Codex process uses `workspace-write` sandboxing. Beast does not grant the ordinary ticket workflow permission to commit, push, open pull requests, merge, deploy, alter system configuration, or write outside the registered workspace.
+The Codex process uses `workspace-write` sandboxing. The Claude Code process runs with `acceptEdits`, no permission prompts (anything needing approval is denied), ignored user/project settings and MCP servers, and a narrow Bash allowlist; see the README for the exact rules. Beast does not grant the ordinary ticket workflow permission to commit, push, open pull requests, merge, deploy, alter system configuration, or write outside the registered workspace.
 
 ## Queue and persistence
 
@@ -56,7 +56,7 @@ Queued jobs can resume after a normal restart. A job that was still working when
 
 ## Verification
 
-After the agent returns, Beast captures Git status and HEAD, then runs configured npm verification scripts when available. Git helpers only inspect state; the npm scripts run as host child processes outside the Codex sandbox and can modify files. They inherit the host environment except the two filtered Linear credentials. Use trusted scripts. The recorded Git snapshot is from before those scripts; Beast does not capture it again afterward.
+After the agent returns, Beast captures Git status and HEAD, then runs configured npm verification scripts when available. Git helpers only inspect state; the npm scripts run as host child processes outside the agent sandbox and can modify files. They inherit the host environment except the two filtered Linear credentials. Use trusted scripts. The recorded Git snapshot is from before those scripts; Beast does not capture it again afterward.
 
 Missing package metadata, scripts or dependencies cause checks to be skipped. Skipped checks count as passing, including when every check is skipped. HEAD movement is a warning only. A successful agent exit without an agent error, timeout or cancellation produces a completed job even if verification fails or the plain-text summary says work is incomplete.
 

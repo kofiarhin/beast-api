@@ -22,6 +22,8 @@ export interface Config {
   webhookToleranceMs: number;
   codexBin: string;
   codexModel: string | undefined;
+  claudeBin: string;
+  claudeModel: string | undefined;
 }
 
 /** Environment variables that must never be passed to child processes (agents, verification). */
@@ -65,5 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, cwd = process.c
     webhookToleranceMs: positiveInt(env.BEAST_WEBHOOK_TOLERANCE_MS, 60_000, "BEAST_WEBHOOK_TOLERANCE_MS"),
     codexBin: nonEmpty(env.BEAST_CODEX_BIN) ?? "codex",
     codexModel: nonEmpty(env.BEAST_CODEX_MODEL),
+    claudeBin: nonEmpty(env.BEAST_CLAUDE_BIN) ?? "claude",
+    claudeModel: nonEmpty(env.BEAST_CLAUDE_MODEL),
   };
 }
