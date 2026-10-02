@@ -2,8 +2,11 @@
  * Minimal structured JSON logger.
  *
  * Any field whose key looks sensitive is redacted, so accidental
- * `logger.info("x", { apiKey })` calls cannot leak secrets.
+ * `logger.info("x", { apiKey })` calls cannot leak secrets. String values and
+ * messages are also scrubbed of secret values and known credential formats.
  */
+import { redactSecrets } from "./util/redact.js";
+
 export type LogFields = Record<string, unknown>;
 type Level = "debug" | "info" | "warn" | "error";
 
@@ -22,8 +25,12 @@ export function redact(fields: LogFields): LogFields {
   for (const [k, v] of Object.entries(fields)) {
     if (SENSITIVE_KEY.test(k)) {
       out[k] = "[REDACTED]";
+    } else if (typeof v === "string") {
+      out[k] = redactSecrets(v);
     } else if (v instanceof Error) {
-      out[k] = v.message;
+      out[k] = redactSecrets(v.message);
+    } else if (Array.isArray(v)) {
+      out[k] = v.map((item) => (typeof item === "string" ? redactSecrets(item) : item));
     } else if (v && typeof v === "object" && !Array.isArray(v)) {
       out[k] = redact(v as LogFields);
     } else {
@@ -38,7 +45,7 @@ export function createLogger(
   sink: (line: string) => void = (line) => process.stdout.write(line + "\n"),
 ): Logger {
   const write = (level: Level, msg: string, fields: LogFields = {}) => {
-    sink(JSON.stringify({ time: new Date().toISOString(), level, msg, ...redact({ ...base, ...fields }) }));
+    sink(JSON.stringify({ time: new Date().toISOString(), level, msg: redactSecrets(msg), ...redact({ ...base, ...fields }) }));
   };
   return {
     debug: (m, f) => write("debug", m, f),

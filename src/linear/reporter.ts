@@ -1,6 +1,7 @@
 import type { Logger } from "../logger.js";
 import type { Job } from "../queue/types.js";
 import type { VerificationResult } from "../verify/verify.js";
+import { redactSecrets } from "../util/redact.js";
 import type { LinearClient } from "./client.js";
 
 /**
@@ -14,8 +15,9 @@ export class LinearReporter {
   ) {}
 
   private async post(job: Job, stage: string, lines: string[], nextAction: string): Promise<void> {
-    const body = [`**Beast: ${stage}**`, "", ...lines, "", `**Next Action:** ${nextAction}`, "", `_Job ${job.id}_`].join(
-      "\n",
+    // Every comment is redacted as a whole: agent summaries, reasons and check output can all echo secrets.
+    const body = redactSecrets(
+      [`**Beast: ${stage}**`, "", ...lines, "", `**Next Action:** ${nextAction}`, "", `_Job ${job.id}_`].join("\n"),
     );
     try {
       await this.linear.addComment(job.issue.id, body);
@@ -95,7 +97,12 @@ export function formatVerification(v: VerificationResult): string[] {
   lines.push(`- Changed files (${v.changedFiles.length}):`);
   for (const f of v.changedFiles.slice(0, 30)) lines.push(`  - \`${f}\``);
   if (v.changedFiles.length > 30) lines.push(`  - …and ${v.changedFiles.length - 30} more`);
-  if (v.newCommits) lines.push("- ⚠️ HEAD moved: the agent created commit(s). Review before pushing.");
+  if (v.approvalViolations?.length) {
+    lines.push("- ⛔ Approval-gated Git actions performed without approval:");
+    for (const a of v.approvalViolations) lines.push(`  - ${a}`);
+  } else if (v.newCommits) {
+    lines.push("- ⚠️ HEAD moved: the agent created commit(s). Review before pushing.");
+  }
   for (const c of v.checks) {
     lines.push(`- ${c.name}: ${c.status}${c.detail ? ` (${c.detail})` : ""}`);
   }

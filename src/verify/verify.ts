@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { childEnv, runCommand } from "../util/exec.js";
+import { redactSecrets } from "../util/redact.js";
 import { gitHead, gitStatus } from "../workspace/git.js";
 
 export type CheckStatus = "passed" | "failed" | "timed_out" | "skipped";
@@ -22,6 +23,8 @@ export interface VerificationResult {
   headBefore: string | null;
   headAfter: string | null;
   newCommits: boolean;
+  /** Approval-gated Git actions the agent performed (see workspace/approval.ts). */
+  approvalViolations: string[];
   checks: CheckResult[];
   passed: boolean;
 }
@@ -33,6 +36,7 @@ export interface VerifyOptions {
   agentTimedOut: boolean;
   scripts: string[];
   timeoutMs: number;
+  approvalViolations?: string[];
 }
 
 async function readScripts(workspacePath: string): Promise<Record<string, string> | null> {
@@ -92,12 +96,13 @@ export async function verifyWorkspace(opts: VerifyOptions): Promise<Verification
       status: res.timedOut ? "timed_out" : res.exitCode === 0 ? "passed" : "failed",
       exitCode: res.exitCode,
       durationMs: res.durationMs,
-      detail: res.spawnError,
-      outputTail: (res.stdout + "\n" + res.stderr).trim().slice(-2_000),
+      detail: res.spawnError && redactSecrets(res.spawnError),
+      outputTail: redactSecrets((res.stdout + "\n" + res.stderr).trim().slice(-2_000)),
     });
   }
 
   const agentOk = opts.agentExitCode === 0 && !opts.agentTimedOut;
+  const approvalViolations = opts.approvalViolations ?? [];
   return {
     agentExitCode: opts.agentExitCode,
     agentTimedOut: opts.agentTimedOut,
@@ -106,7 +111,8 @@ export async function verifyWorkspace(opts: VerifyOptions): Promise<Verification
     headBefore: opts.headBefore,
     headAfter,
     newCommits: opts.headBefore !== headAfter,
+    approvalViolations,
     checks,
-    passed: agentOk && status.ok && checks.every((c) => c.status === "passed" || c.status === "skipped"),
+    passed: agentOk && status.ok && approvalViolations.length === 0 && checks.every((c) => c.status === "passed" || c.status === "skipped"),
   };
 }

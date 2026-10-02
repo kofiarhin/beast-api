@@ -5,7 +5,9 @@ import type { AgentAdapter, AgentResult } from "../agents/types.js";
 import type { LinearReporter } from "../linear/reporter.js";
 import type { Logger } from "../logger.js";
 import type { ProjectRegistry } from "../registry/registry.js";
+import { redactSecrets } from "../util/redact.js";
 import { verifyWorkspace } from "../verify/verify.js";
+import { captureGitSnapshot, detectApprovalViolations } from "../workspace/approval.js";
 import { resolveWorkspaceTarget, type WorkspaceTarget } from "../workspace/target.js";
 import { validateWorkspace } from "../workspace/validate.js";
 import type { JobStore } from "./store.js";
@@ -145,6 +147,7 @@ export class Worker {
     await reporter.working(job);
 
     const logFile = path.join(this.deps.logDir, `${job.id}.log`);
+    const snapshotBefore = await captureGitSnapshot(workspace.path);
     const controller = new AbortController();
     this.active = { jobId: job.id, controller };
     let agentResult: AgentResult;
@@ -176,6 +179,7 @@ export class Worker {
       this.active = null;
     }
     const cancelled = controller.signal.aborted;
+    const approvalViolations = detectApprovalViolations(snapshotBefore, await captureGitSnapshot(workspace.path));
 
     const verification = await verifyWorkspace({
       workspacePath: workspace.path,
@@ -185,27 +189,43 @@ export class Worker {
       // A stopped job only records Git state; project scripts are not started.
       scripts: cancelled ? [] : this.deps.verifyScripts,
       timeoutMs: this.deps.verifyTimeoutMs,
+      approvalViolations,
     });
 
     const result = {
       agentExitCode: agentResult.exitCode,
       agentTimedOut: agentResult.timedOut,
       agentDurationMs: agentResult.durationMs,
-      agentSummary: agentResult.summary,
+      agentSummary: agentResult.summary && redactSecrets(agentResult.summary),
       logFile,
       verification,
     };
     const agentOk = agentResult.exitCode === 0 && !agentResult.timedOut && !agentResult.error && !cancelled;
     const finishedAt = new Date().toISOString();
 
+    if (agentOk && approvalViolations.length > 0) {
+      const reason = `Agent performed approval-gated Git action(s) without approval: ${approvalViolations.join("; ")}`;
+      job = store.updateJob(job.id, {
+        state: "failed",
+        reason,
+        result,
+        finishedAt,
+        nextAction: `Inspect ${workspace.path} and undo the unapproved Git changes yourself (Beast never resets or deletes work), then re-add the ready label to retry.`,
+      });
+      log.warn("job failed: approval violation", { jobState: "failed", violations: approvalViolations });
+      await reporter.failed(job, reason, verification);
+      return;
+    }
+
     if (!agentOk) {
-      const reason = cancelled
+      let reason = cancelled
         ? `Agent was stopped: ${String(controller.signal.reason)}`
         : agentResult.error
-        ? `Agent could not run: ${agentResult.error}`
+        ? `Agent could not run: ${redactSecrets(agentResult.error)}`
         : agentResult.timedOut
           ? `Agent timed out after ${this.deps.agentTimeoutMs} ms`
           : `Agent exited with status ${agentResult.exitCode}`;
+      if (approvalViolations.length > 0) reason += `; it also performed approval-gated Git action(s): ${approvalViolations.join("; ")}`;
       job = store.updateJob(job.id, {
         state: "failed",
         reason,
