@@ -4,6 +4,7 @@ import type { LinearIssue, LinearLabel } from "../linear/types.js";
 import type { Logger } from "../logger.js";
 import type { JobStore } from "../queue/store.js";
 import type { ProjectRegistry } from "../registry/registry.js";
+import { resolveWorkspaceTarget, type WorkspaceTarget } from "../workspace/target.js";
 
 /** Subset of the Linear webhook payload that Beast relies on. */
 export interface LinearWebhookPayload {
@@ -104,9 +105,15 @@ export async function handleLinearEvent(deps: IntakeDeps, deliveryId: string, pa
     return { outcome: "ignored", reason: `issue already has active job ${active.id}` };
   }
 
-  const entry = deps.registry.resolve(issue.project);
+  let entry: WorkspaceTarget | undefined;
+  let targetError: string | undefined;
+  try {
+    entry = resolveWorkspaceTarget(deps.registry, issue);
+  } catch (err) {
+    targetError = err instanceof Error ? err.message : String(err);
+  }
   if (!entry) {
-    const reason = `Linear project "${issue.project?.name ?? issue.project?.id ?? "none"}" is not registered with Beast`;
+    const reason = targetError ?? `Linear project "${issue.project?.name ?? issue.project?.id ?? "none"}" is not registered with Beast`;
     const job = deps.store.createJob({
       deliveryId,
       issue,
@@ -115,7 +122,7 @@ export async function handleLinearEvent(deps: IntakeDeps, deliveryId: string, pa
       agent: deps.agent,
       state: "blocked",
       reason,
-      nextAction: "Register the project in config/projects.json (or fix the ticket's project), then re-add the ready label.",
+      nextAction: "Provide a valid Beast workspace directive or register the ticket's project, then re-add the ready label.",
       finishedAt: new Date().toISOString(),
     });
     log.warn("job blocked: unknown project", { jobId: job.id, jobState: "blocked", project: job.project });

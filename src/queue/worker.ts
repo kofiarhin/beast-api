@@ -5,7 +5,10 @@ import type { AgentAdapter, AgentResult } from "../agents/types.js";
 import type { LinearReporter } from "../linear/reporter.js";
 import type { Logger } from "../logger.js";
 import type { ProjectRegistry } from "../registry/registry.js";
+import { redactSecrets } from "../util/redact.js";
 import { verifyWorkspace } from "../verify/verify.js";
+import { captureGitSnapshot, detectApprovalViolations } from "../workspace/approval.js";
+import { resolveWorkspaceTarget, type WorkspaceTarget } from "../workspace/target.js";
 import { validateWorkspace } from "../workspace/validate.js";
 import type { JobStore } from "./store.js";
 import type { Job } from "./types.js";
@@ -109,8 +112,16 @@ export class Worker {
 
     let job = store.updateJob(queued.id, { state: "working", startedAt: new Date().toISOString() });
 
-    // Re-resolve from the registry at run time; never trust a path stored earlier.
-    const entry = registry.resolve({ name: job.project, id: job.issue.project?.id });
+    // Re-resolve the authorized ticket snapshot; never trust the stored workspace path.
+    let entry: WorkspaceTarget | undefined;
+    try {
+      entry = resolveWorkspaceTarget(registry, {
+        description: job.issue.description,
+        project: { name: job.project, id: job.issue.project?.id },
+      });
+    } catch (err) {
+      return this.block(job, err instanceof Error ? err.message : String(err), "Fix the Beast workspace directive, then re-add the ready label.");
+    }
     if (!entry) {
       return this.block(
         job,
@@ -124,7 +135,9 @@ export class Worker {
       const nextAction =
         check.code === "dirty"
           ? `Commit, stash or discard the existing changes in ${entry.workspace} yourself, then re-add the ready label.`
-          : `Fix the workspace at ${entry.workspace} (${check.code}), then re-add the ready label.`;
+          : check.code === "exists"
+            ? `${entry.workspace} already exists. Use "Beast workspace mode: existing" or choose a new path, then re-add the ready label.`
+            : `Fix the workspace at ${entry.workspace} (${check.code}), then re-add the ready label.`;
       return this.block(job, check.reason, nextAction, check.dirtyFiles);
     }
     const workspace = check.workspace;
@@ -134,6 +147,7 @@ export class Worker {
     await reporter.working(job);
 
     const logFile = path.join(this.deps.logDir, `${job.id}.log`);
+    const snapshotBefore = await captureGitSnapshot(workspace.path);
     const controller = new AbortController();
     this.active = { jobId: job.id, controller };
     let agentResult: AgentResult;
@@ -165,6 +179,7 @@ export class Worker {
       this.active = null;
     }
     const cancelled = controller.signal.aborted;
+    const approvalViolations = detectApprovalViolations(snapshotBefore, await captureGitSnapshot(workspace.path));
 
     const verification = await verifyWorkspace({
       workspacePath: workspace.path,
@@ -174,27 +189,43 @@ export class Worker {
       // A stopped job only records Git state; project scripts are not started.
       scripts: cancelled ? [] : this.deps.verifyScripts,
       timeoutMs: this.deps.verifyTimeoutMs,
+      approvalViolations,
     });
 
     const result = {
       agentExitCode: agentResult.exitCode,
       agentTimedOut: agentResult.timedOut,
       agentDurationMs: agentResult.durationMs,
-      agentSummary: agentResult.summary,
+      agentSummary: agentResult.summary && redactSecrets(agentResult.summary),
       logFile,
       verification,
     };
     const agentOk = agentResult.exitCode === 0 && !agentResult.timedOut && !agentResult.error && !cancelled;
     const finishedAt = new Date().toISOString();
 
+    if (agentOk && approvalViolations.length > 0) {
+      const reason = `Agent performed approval-gated Git action(s) without approval: ${approvalViolations.join("; ")}`;
+      job = store.updateJob(job.id, {
+        state: "failed",
+        reason,
+        result,
+        finishedAt,
+        nextAction: `Inspect ${workspace.path} and undo the unapproved Git changes yourself (Beast never resets or deletes work), then re-add the ready label to retry.`,
+      });
+      log.warn("job failed: approval violation", { jobState: "failed", violations: approvalViolations });
+      await reporter.failed(job, reason, verification);
+      return;
+    }
+
     if (!agentOk) {
-      const reason = cancelled
+      let reason = cancelled
         ? `Agent was stopped: ${String(controller.signal.reason)}`
         : agentResult.error
-        ? `Agent could not run: ${agentResult.error}`
+        ? `Agent could not run: ${redactSecrets(agentResult.error)}`
         : agentResult.timedOut
           ? `Agent timed out after ${this.deps.agentTimeoutMs} ms`
           : `Agent exited with status ${agentResult.exitCode}`;
+      if (approvalViolations.length > 0) reason += `; it also performed approval-gated Git action(s): ${approvalViolations.join("; ")}`;
       job = store.updateJob(job.id, {
         state: "failed",
         reason,

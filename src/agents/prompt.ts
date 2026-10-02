@@ -40,6 +40,7 @@ If the ticket is ambiguous or cannot be completed safely, stop and explain why i
 
 # You MUST NOT
 - run \`git push\`, \`git commit\`, \`git stash\`, \`git reset\`, \`git checkout -- <files>\`, \`git clean\` or any command that discards work
+- switch, create or delete branches or tags, or change Git remotes (Beast checks Git state after you finish and fails the job if any of this happened)
 - create pull requests, merge branches or deploy anything
 - modify DNS, Nginx, firewall, systemd, PM2 or any other VPS/system configuration
 - read, create or modify files outside ${task.workspacePath}

@@ -126,13 +126,34 @@ payload.
 
 Rules enforced at startup:
 
-- workspace paths must be absolute, normalized, and **inside** `BEAST_WORKSPACE_ROOT`
-  (`/home/ubuntu/projects`);
+- workspace paths must be absolute and normalized;
+- an entry outside `/home/ubuntu/projects` is loaded but quarantined: startup logs a warning and
+  every ticket for that project is blocked, because Beast never runs an agent outside the root;
 - names and paths must be unique.
 
 Resolution is **exact** (case-insensitive name, or `linearProjectId` if pinned). There is no fuzzy
 matching and no path derivation — Beast never guesses a workspace. An issue with no project or an
-unregistered project is blocked.
+unregistered project is blocked, unless it carries an explicit workspace directive (below).
+
+### Targeting any project under `/home/ubuntu/projects`
+
+An authorized ticket can override its registered workspace with directive lines in its description.
+Each directive must sit on its own line, starting at the beginning of the line:
+
+```
+Beast workspace: /home/ubuntu/projects/escowear
+Beast workspace mode: create
+```
+
+- `mode` is `existing` (the default) or `create`. `existing` needs a clean Git repository at that path.
+  `create` makes a new directory and runs `git init`, without making a commit. It refuses any path that
+  already exists, so an existing project is never overwritten. It also refuses a path inside another
+  repository.
+- The path must be absolute, normalized and a strict child of `/home/ubuntu/projects`. Beast rejects
+  `..`, trailing slashes, the root itself, and any symlink in the path, including dangling links.
+- A ticket with more than one directive, or with an unknown mode, is blocked. A path that only
+  appears in ordinary prose never grants access.
+- `BEAST_WORKSPACE_ROOT` cannot point anywhere else: startup fails if it is set to another path.
 
 **Beast API routing caution:** The shipped `Beast` entry selects
 `/home/ubuntu/projects/beast`, the VPS documentation repository, not Beast API source.
@@ -308,7 +329,7 @@ never logged.
 | `BEAST_AGENT`                | `codex`                         | Agent adapter                                 |
 | `BEAST_DATA_DIR`             | `./data`                        | State + logs                                  |
 | `BEAST_PROJECTS_FILE`        | `./config/projects.json`        | Registry                                      |
-| `BEAST_WORKSPACE_ROOT`       | `/home/ubuntu/projects`         | All workspaces must be inside                 |
+| `BEAST_WORKSPACE_ROOT`       | `/home/ubuntu/projects`         | Fixed; any other value fails startup          |
 | `BEAST_AGENT_TIMEOUT_MS`     | `3600000`                       | Agent timeout                                 |
 | `BEAST_VERIFY_TIMEOUT_MS`    | `600000`                        | Per verification script                       |
 | `BEAST_VERIFY_SCRIPTS`       | `test,lint,typecheck,build`     | npm scripts to run if present                 |

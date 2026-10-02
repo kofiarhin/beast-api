@@ -1,13 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ProjectEntry, ProjectRegistry } from "../registry/registry.js";
+import type { ProjectRegistry } from "../registry/registry.js";
+import { validTargetPath, type WorkspaceTarget } from "./target.js";
 import { git, gitHead, gitStatus } from "./git.js";
 
 /**
  * A workspace that passed every safety check. Instances can only be created
- * by `validateWorkspace` and are tracked in a private WeakSet, so the agent
+ * by `validateWorkspace` and are tracked in a private WeakMap, so the agent
  * launcher can verify at runtime that it was handed a genuinely validated,
- * registered workspace rather than an arbitrary path.
+ * workspace inside the root rather than an arbitrary path.
  */
 export interface ValidatedWorkspace {
   readonly project: string;
@@ -15,50 +16,59 @@ export interface ValidatedWorkspace {
   readonly headBefore: string | null;
 }
 
-export type WorkspaceBlockCode = "unregistered" | "outside_root" | "missing" | "not_git" | "dirty" | "git_error";
+export type WorkspaceBlockCode = "exists" | "outside_root" | "missing" | "not_git" | "dirty" | "git_error";
 
 export type WorkspaceCheck =
   | { ok: true; workspace: ValidatedWorkspace }
   | { ok: false; code: WorkspaceBlockCode; reason: string; dirtyFiles?: string[] };
 
-const validated = new WeakSet<ValidatedWorkspace>();
+const validated = new WeakMap<ValidatedWorkspace, ProjectRegistry>();
 
-export function isValidatedWorkspace(value: unknown): value is ValidatedWorkspace {
-  return typeof value === "object" && value !== null && validated.has(value as ValidatedWorkspace);
+export function isValidatedWorkspace(value: unknown, registry?: ProjectRegistry): value is ValidatedWorkspace {
+  return typeof value === "object" && value !== null && validated.has(value as ValidatedWorkspace) &&
+    (!registry || validated.get(value as ValidatedWorkspace) === registry);
 }
 
-function isInside(root: string, candidate: string): boolean {
-  const rel = path.relative(root, candidate);
-  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-}
-
-export async function validateWorkspace(registry: ProjectRegistry, entry: ProjectEntry): Promise<WorkspaceCheck> {
-  // 1. Must be an explicitly registered workspace.
-  if (!registry.isRegisteredWorkspace(entry.workspace)) {
-    return { ok: false, code: "unregistered", reason: `Workspace ${entry.workspace} is not registered` };
+export async function validateWorkspace(registry: ProjectRegistry, entry: WorkspaceTarget): Promise<WorkspaceCheck> {
+  const root = registry.workspaceRoot;
+  if (!validTargetPath(root, entry.workspace)) {
+    return { ok: false, code: "outside_root", reason: `Workspace must be a normalized child path inside ${root}, without traversal` };
   }
 
-  // 2. Must exist and be a directory.
+  // Fail closed on symlinks, including dangling links and any parent component.
+  // The configured root must itself be canonical, never an alias outside the boundary.
   let realPath: string;
   try {
-    const stat = await fs.stat(entry.workspace);
-    if (!stat.isDirectory()) {
-      return { ok: false, code: "missing", reason: `Workspace ${entry.workspace} is not a directory` };
+    if (await fs.realpath(root) !== root) {
+      return { ok: false, code: "outside_root", reason: "Workspace root must not contain symlinks" };
+    }
+    const parts = path.relative(root, entry.workspace).split(path.sep);
+    let current = root;
+    for (const [index, part] of parts.entries()) {
+      current = path.join(current, part);
+      const stat = await fs.lstat(current).catch((err: NodeJS.ErrnoException) => {
+        if (err.code === "ENOENT") return null;
+        throw err;
+      });
+      if (stat?.isSymbolicLink()) return { ok: false, code: "outside_root", reason: `Workspace path contains a symlink: ${current}` };
+      const leaf = index === parts.length - 1;
+      if (leaf && entry.mode === "create") {
+        if (stat) return { ok: false, code: "exists", reason: `Refusing to overwrite existing project ${current}` };
+        // Do not create inside another repository, even a clean one.
+        const parentRepo = await git(path.dirname(current), ["rev-parse", "--show-toplevel"]);
+        if (parentRepo.exitCode === 0) return { ok: false, code: "not_git", reason: "Cannot create a project inside another Git repository" };
+        // Exclusive mkdir: a competing creator must never be silently reused.
+        await fs.mkdir(current);
+        const init = await git(current, ["init", "--quiet"]);
+        if (init.exitCode !== 0) return { ok: false, code: "git_error", reason: "Could not initialize new project repository; directory retained for inspection" };
+      } else if (!stat?.isDirectory()) {
+        return { ok: false, code: "missing", reason: `Workspace directory ${current} does not exist or is not a directory` };
+      }
     }
     realPath = await fs.realpath(entry.workspace);
-  } catch {
-    return { ok: false, code: "missing", reason: `Workspace ${entry.workspace} does not exist` };
-  }
-
-  // Symlinks must not escape the workspace root.
-  let realRoot: string;
-  try {
-    realRoot = await fs.realpath(registry.workspaceRoot);
-  } catch {
-    return { ok: false, code: "missing", reason: `Workspace root ${registry.workspaceRoot} does not exist` };
-  }
-  if (!isInside(realRoot, realPath)) {
-    return { ok: false, code: "outside_root", reason: `Workspace ${entry.workspace} resolves outside ${realRoot}` };
+    if (realPath !== entry.workspace) return { ok: false, code: "outside_root", reason: "Workspace path changed during validation" };
+  } catch (err) {
+    return { ok: false, code: "missing", reason: `Could not prepare workspace: ${err instanceof Error ? err.message : String(err)}` };
   }
 
   // 3. Must be the root of a Git repository (not a subdirectory of some other repo).
@@ -94,6 +104,6 @@ export async function validateWorkspace(registry: ProjectRegistry, entry: Projec
     path: entry.workspace,
     headBefore: await gitHead(realPath),
   });
-  validated.add(workspace);
+  validated.set(workspace, registry);
   return { ok: true, workspace };
 }

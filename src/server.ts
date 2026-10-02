@@ -15,6 +15,12 @@ async function main(): Promise<void> {
   const logger = createLogger({ service: "beast-api" });
 
   const registry = loadRegistry(config.projectsFile, config.workspaceRoot);
+  if (registry.outsideRoot.length) {
+    logger.warn("registry entries outside the workspace root will always be blocked", {
+      workspaceRoot: config.workspaceRoot,
+      projects: registry.outsideRoot,
+    });
+  }
   const adapter = createAgentAdapter(config);
   const store = new JobStore(config.dataDir);
   const linear: LinearClient = config.linearApiKey
