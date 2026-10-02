@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ClaudeAdapter } from "../src/agents/claude.js";
 import { buildCodexArgs, CodexAdapter } from "../src/agents/codex.js";
 import { createAgentAdapter } from "../src/agents/index.js";
 import { buildAgentPrompt, extractAcceptanceCriteria } from "../src/agents/prompt.js";
@@ -23,8 +24,14 @@ describe("agent adapter selection", () => {
     expect(adapter.name).toBe("codex");
   });
 
-  it("reports claude as not implemented yet", () => {
-    expect(() => createAgentAdapter(loadConfig({ BEAST_AGENT: "claude" }))).toThrow(/not implemented/);
+  it("selects claude when configured, with its binary and model", () => {
+    const adapter = createAgentAdapter(loadConfig({ BEAST_AGENT: "Claude" }));
+    expect(adapter).toBeInstanceOf(ClaudeAdapter);
+    expect(adapter.name).toBe("claude");
+    const config = loadConfig({ BEAST_CLAUDE_BIN: "/opt/claude", BEAST_CLAUDE_MODEL: "opus" });
+    expect(config.claudeBin).toBe("/opt/claude");
+    expect(config.claudeModel).toBe("opus");
+    expect(loadConfig({}).claudeBin).toBe("claude");
   });
 
   it("rejects unknown agents", () => {

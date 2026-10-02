@@ -77,13 +77,13 @@ Review the exact change and preserve existing routing. Apply registry changes an
 
 **Job blocked:** read the Linear comment. Common causes are an unknown project, missing workspace, non-Git directory, or dirty Git working tree.
 
-**Agent fails:** inspect the job/PM2 logs for the exit reason, then check Codex availability/authentication and the workspace. Do not automatically retry state-changing work.
+**Agent fails:** inspect the job/PM2 logs for the exit reason, then check that the configured agent CLI (`codex` or `claude`) is available and logged in for the service user, and check the workspace. Do not automatically retry state-changing work.
 
 **Missing or misleading progress:** comments are best-effort, may arrive out of order and are not retried durably. Working is posted before launch. Check local job state and PM2 logs before re-adding Beast Ready; a missing comment does not mean the job never ran.
 
 **Verification fails or every check is skipped:** completed is an agent-exit outcome, not acceptance of the ticket. Skipped checks count as passing and failed checks do not prevent the completed job state. Inspect the final diff, summary and required checks; distinguish new failures from pre-existing ones before deciding the next action.
 
-**Verification changes files:** project npm scripts run outside the Codex sandbox as host processes. Use trusted scripts and inspect the workspace afterward; the recorded Git status/HEAD snapshot was taken before the scripts.
+**Verification changes files:** project npm scripts run outside the agent sandbox as host processes. Use trusted scripts and inspect the workspace afterward; the recorded Git status/HEAD snapshot was taken before the scripts.
 
 ## Production changes
 
