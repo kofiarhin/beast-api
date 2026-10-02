@@ -3,6 +3,9 @@ import path from "node:path";
 /** Beast only ever listens on loopback. This is intentionally not configurable. */
 export const HOST = "127.0.0.1";
 
+/** The only permitted development workspace root. Intentionally not configurable. */
+export const WORKSPACE_ROOT = "/home/ubuntu/projects";
+
 export interface Config {
   port: number;
   linearApiKey: string | undefined;
@@ -39,6 +42,10 @@ function positiveInt(value: string | undefined, fallback: number, name: string):
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): Config {
+  const requestedRoot = nonEmpty(env.BEAST_WORKSPACE_ROOT);
+  if (requestedRoot && path.resolve(requestedRoot) !== WORKSPACE_ROOT) {
+    throw new Error(`BEAST_WORKSPACE_ROOT must be ${WORKSPACE_ROOT}`);
+  }
   return {
     port: positiveInt(env.PORT, 3100, "PORT"),
     linearApiKey: nonEmpty(env.LINEAR_API_KEY),
@@ -48,7 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, cwd = process.c
     agent: (nonEmpty(env.BEAST_AGENT) ?? "codex").toLowerCase(),
     dataDir: path.resolve(cwd, nonEmpty(env.BEAST_DATA_DIR) ?? "data"),
     projectsFile: path.resolve(cwd, nonEmpty(env.BEAST_PROJECTS_FILE) ?? "config/projects.json"),
-    workspaceRoot: path.resolve(nonEmpty(env.BEAST_WORKSPACE_ROOT) ?? "/home/ubuntu/projects"),
+    workspaceRoot: WORKSPACE_ROOT,
     agentTimeoutMs: positiveInt(env.BEAST_AGENT_TIMEOUT_MS, 60 * 60 * 1000, "BEAST_AGENT_TIMEOUT_MS"),
     verifyTimeoutMs: positiveInt(env.BEAST_VERIFY_TIMEOUT_MS, 10 * 60 * 1000, "BEAST_VERIFY_TIMEOUT_MS"),
     verifyScripts: (nonEmpty(env.BEAST_VERIFY_SCRIPTS) ?? "test,lint,typecheck,build")

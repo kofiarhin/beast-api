@@ -23,9 +23,17 @@ function task(workspacePath: string) {
 }
 
 describe("project registry", () => {
-  it("rejects workspaces outside the workspace root", () => {
+  it("quarantines workspaces outside the workspace root so they can never be validated", async () => {
     root = makeTmpDir();
-    expect(() => new ProjectRegistry([{ name: "Evil", workspace: "/etc" }], path.join(root, "projects"))).toThrow(/inside/);
+    const ws = path.join(root, "projects");
+    fs.mkdirSync(ws);
+    const outside = makeRepo(root, "outside");
+    const reg = new ProjectRegistry([{ name: "Evil", workspace: "/etc" }, { name: "Out", workspace: outside }], ws);
+    expect(reg.outsideRoot).toEqual(["Evil", "Out"]);
+    expect(reg.isRegisteredWorkspace(outside)).toBe(false);
+    for (const name of ["Evil", "Out"]) {
+      expect(await validateWorkspace(reg, reg.resolve({ name })!)).toMatchObject({ ok: false, code: "outside_root" });
+    }
   });
 
   it("rejects relative, non-normalized and duplicate entries", () => {
@@ -63,7 +71,7 @@ describe("project registry", () => {
     expect(reg.resolve({ id: "other", name: "X" })).toBeUndefined();
   });
 
-  it("loads the shipped registry with the four initial projects", async () => {
+  it("loads the shipped registry, quarantining the out-of-root Beast API entry", async () => {
     const { loadRegistry } = await import("../src/registry/registry.js");
     const reg = loadRegistry(path.resolve(import.meta.dirname, "../config/projects.json"), "/home/ubuntu/projects");
     expect(reg.list().map((p) => [p.name, p.workspace])).toEqual([
@@ -71,7 +79,10 @@ describe("project registry", () => {
       ["DevKofi", "/home/ubuntu/projects/devkofi"],
       ["IdeaHub API", "/home/ubuntu/projects/ideahub-api"],
       ["LeadRadar", "/home/ubuntu/projects/leadradar"],
+      ["Beast API", "/home/ubuntu/apps/beast-api"],
     ]);
+    expect(reg.outsideRoot).toEqual(["Beast API"]);
+    expect(await validateWorkspace(reg, reg.resolve({ name: "Beast API" })!)).toMatchObject({ ok: false, code: "outside_root" });
   });
 });
 
@@ -85,13 +96,13 @@ describe("workspace validation", () => {
     expect(check.ok).toBe(true);
   });
 
-  it("rejects an entry that is not in the registry", async () => {
+  it("accepts a clean child repository that is not in the registry", async () => {
     root = makeTmpDir();
     const ws = path.join(root, "projects");
     const repo = makeRepo(ws, "p");
     const reg = new ProjectRegistry([], ws);
     const check = await validateWorkspace(reg, { name: "P", workspace: repo });
-    expect(check).toMatchObject({ ok: false, code: "unregistered" });
+    expect(check.ok).toBe(true);
   });
 
   it("rejects a subdirectory of another git repo", async () => {
@@ -131,7 +142,7 @@ describe("agent launcher", () => {
     expect(agent.calls).toHaveLength(0);
   });
 
-  it("refuses a validated workspace that is not in the given registry", async () => {
+  it("refuses a workspace validated against a different registry", async () => {
     root = makeTmpDir();
     const ws = path.join(root, "projects");
     const repo = makeRepo(ws, "p");
@@ -142,7 +153,7 @@ describe("agent launcher", () => {
     const agent = new FakeAgent();
     await expect(
       launchAgent(agent, otherRegistry, check.workspace, task(repo), { timeoutMs: 1000, logFile: "/dev/null" }),
-    ).rejects.toThrow(/not a registered workspace/);
+    ).rejects.toThrow(/not validated against this registry/);
     expect(agent.calls).toHaveLength(0);
   });
 

@@ -7,7 +7,7 @@ export class UnsafeWorkspaceError extends Error {}
 
 /**
  * The only path through which an agent is launched. Refuses anything that is
- * not a workspace produced by `validateWorkspace` for a registered project.
+ * not a workspace produced by `validateWorkspace` for a ticket target.
  */
 export async function launchAgent(
   adapter: AgentAdapter,
@@ -16,11 +16,8 @@ export async function launchAgent(
   task: AgentTask,
   opts: { timeoutMs: number; logFile: string; signal?: AbortSignal },
 ): Promise<AgentResult> {
-  if (!isValidatedWorkspace(workspace)) {
-    throw new UnsafeWorkspaceError("Refusing to launch agent: workspace was not validated");
-  }
-  if (!registry.isRegisteredWorkspace(workspace.path)) {
-    throw new UnsafeWorkspaceError(`Refusing to launch agent: ${workspace.path} is not a registered workspace`);
+  if (!isValidatedWorkspace(workspace, registry)) {
+    throw new UnsafeWorkspaceError("Refusing to launch agent: workspace was not validated against this registry");
   }
   if (task.workspacePath !== workspace.path) {
     throw new UnsafeWorkspaceError("Refusing to launch agent: task workspace does not match validated workspace");

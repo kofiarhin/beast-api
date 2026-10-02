@@ -24,6 +24,8 @@ function isInside(root: string, candidate: string): boolean {
 
 export class ProjectRegistry {
   private readonly entries: readonly ProjectEntry[];
+  /** Names of entries whose workspace is outside the root and therefore never runnable. */
+  readonly outsideRoot: readonly string[];
 
   constructor(
     entries: ProjectEntry[],
@@ -31,6 +33,7 @@ export class ProjectRegistry {
   ) {
     const seenNames = new Set<string>();
     const seenPaths = new Set<string>();
+    const outside: string[] = [];
     for (const e of entries) {
       if (!e.name?.trim()) throw new Error("Registry entry is missing a name");
       if (!e.workspace || !path.isAbsolute(e.workspace)) {
@@ -39,9 +42,9 @@ export class ProjectRegistry {
       if (path.resolve(e.workspace) !== e.workspace.replace(/\/+$/, "")) {
         throw new Error(`Registry entry "${e.name}" workspace path must be normalized`);
       }
-      if (!isInside(workspaceRoot, e.workspace)) {
-        throw new Error(`Registry entry "${e.name}" workspace must be inside ${workspaceRoot}`);
-      }
+      // Kept so the project is recognised, but quarantined: validateWorkspace refuses
+      // any path outside the root, so no job can ever run there.
+      if (!isInside(workspaceRoot, e.workspace)) outside.push(e.name);
       const key = e.name.trim().toLowerCase();
       if (seenNames.has(key)) throw new Error(`Duplicate registry project name "${e.name}"`);
       if (seenPaths.has(e.workspace)) throw new Error(`Duplicate registry workspace "${e.workspace}"`);
@@ -49,6 +52,7 @@ export class ProjectRegistry {
       seenPaths.add(e.workspace);
     }
     this.entries = Object.freeze(entries.map((e) => Object.freeze({ ...e, workspace: path.resolve(e.workspace) })));
+    this.outsideRoot = Object.freeze(outside);
   }
 
   list(): readonly ProjectEntry[] {
@@ -73,7 +77,7 @@ export class ProjectRegistry {
 
   isRegisteredWorkspace(workspacePath: string): boolean {
     const resolved = path.resolve(workspacePath);
-    return this.entries.some((e) => e.workspace === resolved);
+    return isInside(this.workspaceRoot, resolved) && this.entries.some((e) => e.workspace === resolved);
   }
 }
 

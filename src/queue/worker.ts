@@ -6,6 +6,7 @@ import type { LinearReporter } from "../linear/reporter.js";
 import type { Logger } from "../logger.js";
 import type { ProjectRegistry } from "../registry/registry.js";
 import { verifyWorkspace } from "../verify/verify.js";
+import { resolveWorkspaceTarget, type WorkspaceTarget } from "../workspace/target.js";
 import { validateWorkspace } from "../workspace/validate.js";
 import type { JobStore } from "./store.js";
 import type { Job } from "./types.js";
@@ -109,8 +110,16 @@ export class Worker {
 
     let job = store.updateJob(queued.id, { state: "working", startedAt: new Date().toISOString() });
 
-    // Re-resolve from the registry at run time; never trust a path stored earlier.
-    const entry = registry.resolve({ name: job.project, id: job.issue.project?.id });
+    // Re-resolve the authorized ticket snapshot; never trust the stored workspace path.
+    let entry: WorkspaceTarget | undefined;
+    try {
+      entry = resolveWorkspaceTarget(registry, {
+        description: job.issue.description,
+        project: { name: job.project, id: job.issue.project?.id },
+      });
+    } catch (err) {
+      return this.block(job, err instanceof Error ? err.message : String(err), "Fix the Beast workspace directive, then re-add the ready label.");
+    }
     if (!entry) {
       return this.block(
         job,
@@ -124,7 +133,9 @@ export class Worker {
       const nextAction =
         check.code === "dirty"
           ? `Commit, stash or discard the existing changes in ${entry.workspace} yourself, then re-add the ready label.`
-          : `Fix the workspace at ${entry.workspace} (${check.code}), then re-add the ready label.`;
+          : check.code === "exists"
+            ? `${entry.workspace} already exists. Use "Beast workspace mode: existing" or choose a new path, then re-add the ready label.`
+            : `Fix the workspace at ${entry.workspace} (${check.code}), then re-add the ready label.`;
       return this.block(job, check.reason, nextAction, check.dirtyFiles);
     }
     const workspace = check.workspace;
