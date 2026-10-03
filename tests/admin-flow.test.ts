@@ -297,6 +297,30 @@ describe("class C: exact, scope-bound approval", () => {
     await comment(issue.id, `/beast approve ${lastJob().digest}`, { userId: "solo" });
     expect(h.executor.executed).toHaveLength(1);
   });
+
+  it("rejects Beast's own Linear user as approver unless the identity is explicitly shared", async () => {
+    h = makeAdminHarness({ requesters: [BEAST_USER], approvers: [BEAST_USER] });
+    const dir = makeDir();
+    const issue = chownIssue(dir);
+    await requestAdmin(issue, BEAST_USER);
+    await comment(issue.id, `/beast approve ${lastJob().digest}`, { userId: BEAST_USER });
+    expect(h.executor.executed).toHaveLength(0);
+    expect(lastJob().state).toBe("awaiting_approval");
+  });
+
+  it("with a shared identity, accepts the human's approval but never a comment Beast posted", async () => {
+    h = makeAdminHarness({ requesters: [BEAST_USER], approvers: [BEAST_USER], sharedIdentity: true });
+    const dir = makeDir();
+    const issue = chownIssue(dir);
+    await requestAdmin(issue, BEAST_USER);
+    // A comment Beast itself posted, even with the exact approval text, is rejected.
+    h.linear.ownCommentIds.add(`comment-${commentSeq + 1}`);
+    await comment(issue.id, `/beast approve ${lastJob().digest}`, { userId: BEAST_USER });
+    expect(h.executor.executed).toHaveLength(0);
+    // The same user's own new comment is accepted.
+    await comment(issue.id, `/beast approve ${lastJob().digest}`, { userId: BEAST_USER });
+    expect(h.executor.executed).toHaveLength(1);
+  });
 });
 
 describe("separation from coding jobs", () => {

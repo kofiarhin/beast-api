@@ -112,7 +112,7 @@ process.stdin.on("end", () => {
     expect(rec.hasSecret).toBe(false);
   });
 
-  it("keeps the last-message file at mode 0600 even if codex replaces it", async () => {
+  it("keeps the last message private even if codex replaces the file", async () => {
     root = makeTmpDir();
     const ws = path.join(root, "projects");
     const repo = makeRepo(ws, "p");
@@ -128,9 +128,11 @@ process.stdin.on("end", () => {
       bin,
       `#!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
 const args = process.argv.slice(2);
 const out = args[args.indexOf("--output-last-message") + 1];
-fs.writeFileSync(${JSON.stringify(seen)}, String(fs.statSync(out).mode & 0o777));
+// The capture file lives in a private (0700) temporary directory.
+fs.writeFileSync(${JSON.stringify(seen)}, String(fs.statSync(path.dirname(out)).mode & 0o777));
 fs.writeFileSync(out + ".tmp", "summary text", { mode: 0o644 });
 fs.chmodSync(out + ".tmp", 0o644);
 fs.renameSync(out + ".tmp", out);
@@ -158,7 +160,7 @@ fs.renameSync(out + ".tmp", out);
 
     expect(result.exitCode).toBe(0);
     expect(result.summary).toBe("summary text");
-    expect(Number(fs.readFileSync(seen, "utf8"))).toBe(0o600);
+    expect(Number(fs.readFileSync(seen, "utf8"))).toBe(0o700);
     expect(fs.statSync(`${logFile}.last-message.txt`).mode & 0o777).toBe(0o600);
   });
 });

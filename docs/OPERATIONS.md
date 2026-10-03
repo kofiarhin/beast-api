@@ -7,12 +7,13 @@ The [VPS profile](https://github.com/kofiarhin/beast/blob/main/VPS-Beast-AI-Agen
 ## Production layout
 
 - Application: `/home/ubuntu/apps/beast-api`
-- PM2 process: `beast-api`
+- Service: systemd `beast-api.service`, user `beast` (moved off PM2 at IDE-69 activation)
+- Privileged executor: `beast-executor.socket` / `beast-executor.service` (root); jobs run as `beast-agent`
 - Bind address: `127.0.0.1:3100`
 - Public hostname: `beast-api.devkofi.com`
 - Public route: `POST /webhooks/linear`
-- Private environment file: `/home/ubuntu/.config/beast-api/production.env`
-- Runtime state/log directory: application `data/` directory
+- Private environment file: `/etc/beast-api/production.env` (`root:beast 0640`)
+- Runtime state/log directory: `/var/lib/beast-api`
 - Registered agent workspaces: under `/home/ubuntu/projects`
 
 The environment file and runtime data are not committed. Port 3100 and application `data/` are defaults; `PORT` and `BEAST_DATA_DIR` can override them.
@@ -29,11 +30,11 @@ From the VPS:
 
 ```bash
 curl -s http://127.0.0.1:3100/health
-pm2 status beast-api
+systemctl status beast-api beast-executor.socket beast-executor
 ss -ltnp | grep ':3100'
 ```
 
-Expected: health reports healthy, PM2 reports `beast-api` online, and port 3100 listens on loopback only.
+Expected: health reports healthy, `beast-api` is active, the executor socket is listening, and port 3100 listens on loopback only.
 
 Externally, `/health` is intentionally unavailable. An unsigned webhook POST should be rejected; never paste or print the signing secret to test it.
 
@@ -47,19 +48,19 @@ npm run typecheck
 npm run build
 ```
 
-The production process runs the compiled `dist/server.js`. This directory is the live PM2 checkout: running `npm run build` here replaces production code that goes live on the next restart. Build release candidates in a separate checkout or worktree.
+The production process runs the compiled `dist/server.js`. This directory is the live checkout: running `npm run build` here replaces production code that goes live on the next restart. Build release candidates in a separate checkout or worktree. The executor runs its own root-owned copy in `/opt/beast-executor`; see [ADMIN.md](ADMIN.md).
 
 ## Restart policy
 
 A Beast API restart is a production change. Inspect current status and logs first, explain why a restart is required, and obtain explicit approval before restarting it.
 
-The repository includes `deploy/pm2-start.sh` for initial PM2 setup. Do not casually rerun it as a restart command because it creates/saves PM2 state.
+Restart with `sudo systemctl restart beast-api`. `deploy/pm2-start.sh` is the pre-activation PM2 setup, kept only for rollback; running it while the systemd unit is active would start a second copy on the same port.
 
 ## Logs and state
 
-Use PM2 logs and the application runtime logs for diagnosis. Never paste secrets, environment-file contents, webhook signatures, API keys, or tokens into tickets, chat, or GitHub.
+Use `journalctl -u beast-api`, `journalctl -u beast-executor` and the job logs in `/var/lib/beast-api/logs` for diagnosis. Never paste secrets, environment-file contents, webhook signatures, API keys, or tokens into tickets, chat, or GitHub.
 
-`data/state.json` contains local queue/delivery state and is intentionally ignored by Git.
+`/var/lib/beast-api/state.json` contains queue/delivery state.
 
 ## Updating the project registry
 
@@ -77,7 +78,7 @@ Review the exact change and preserve existing routing. Apply registry changes an
 
 **Job blocked:** read the Linear comment. Common causes are an unknown project, missing workspace, non-Git directory, or dirty Git working tree.
 
-**Agent fails:** inspect the job/PM2 logs for the exit reason, then check that the configured agent CLI (`codex` or `claude`) is available and logged in for the service user, and check the workspace. Do not automatically retry state-changing work.
+**Agent fails:** inspect the job/PM2 logs for the exit reason, then check that the configured agent CLI (`codex` or `claude`) is available and logged in for `beast-agent`, and check the workspace. Do not automatically retry state-changing work.
 
 **Missing or misleading progress:** comments are best-effort, may arrive out of order and are not retried durably. Working is posted before launch. Check local job state and PM2 logs before re-adding Beast Ready; a missing comment does not mean the job never ran.
 
@@ -87,7 +88,7 @@ Review the exact change and preserve existing routing. Apply registry changes an
 
 ## Admin operations
 
-Admin mode is off by default (`BEAST_ADMIN_MODE`). Enabling `dry-run` in production, enabling operations in `config/admin-policy.json`, adding Comment events to the Linear webhook and configuring requester/approver IDs are production changes that need explicit approval. The admin audit log is `data/admin-audit.jsonl`. See [ADMIN.md](ADMIN.md).
+Admin mode is `enforce` in production. Changing the admin or executor policy, requester/approver IDs or the Linear webhook are production changes that need explicit approval. The admin audit log is `/var/lib/beast-api/admin-audit.jsonl`; executor decisions are in `journalctl -u beast-executor`. See [ADMIN.md](ADMIN.md).
 
 ## Production changes
 

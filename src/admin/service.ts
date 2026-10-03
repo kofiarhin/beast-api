@@ -220,6 +220,7 @@ export class AdminService {
 
     if (comment.issueId !== job.issueId) return reject("The approval must be posted on the same issue as the plan", job);
     if (comment.edited) return reject("Edited comments are not accepted; post a new comment", job);
+    if (this.deps.linear.isOwnComment(comment.id)) return reject("Comments posted by Beast itself never count as approvals", job);
     const beastUserId = await this.deps.linear.fetchViewerId().catch(() => null);
     if (!beastUserId) return reject("Beast could not determine its own Linear user, so the approver cannot be verified", job);
     if (!isApprover(this.deps.auth, comment.userId, beastUserId)) return reject("The comment author is not an authorized approver", job);

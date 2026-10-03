@@ -10,8 +10,8 @@
 /** A = read-only inspection, B = narrow reversible change, C = dangerous change (exact approval). */
 export type RiskClass = "A" | "B" | "C";
 
-/** `off` ignores admin requests entirely; `dry-run` runs the full flow without touching the host. */
-export type AdminMode = "off" | "dry-run";
+/** `off` ignores admin requests; `dry-run` runs the full flow without touching the host; `enforce` executes through the privileged broker. */
+export type AdminMode = "off" | "dry-run" | "enforce";
 
 /** Unvalidated request as written in a ticket directive. */
 export interface RawOperationRequest {

@@ -28,6 +28,11 @@ export interface AdminAuthConfig {
   requesters: readonly string[];
   /** Linear user IDs allowed to approve class C operations. */
   approvers: readonly string[];
+  /**
+   * Beast's Linear API key belongs to a human approver, so Beast's own Linear user may
+   * approve. Comments Beast itself posted are still rejected (by comment ID).
+   */
+  sharedIdentity?: boolean;
 }
 
 export function isRequester(auth: AdminAuthConfig, userId: string | null | undefined): userId is string {
@@ -35,7 +40,7 @@ export function isRequester(auth: AdminAuthConfig, userId: string | null | undef
 }
 
 export function isApprover(auth: AdminAuthConfig, userId: string | null | undefined, beastUserId: string | null): userId is string {
-  return !!userId && userId !== beastUserId && auth.approvers.includes(userId);
+  return !!userId && (userId !== beastUserId || auth.sharedIdentity === true) && auth.approvers.includes(userId);
 }
 
 export type GrantResult = { ok: true; grant: AuthorizationGrant } | { ok: false; reason: string };

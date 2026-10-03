@@ -112,3 +112,38 @@ export class SystemHostProbe implements HostProbe {
     return lstatPath(p);
   }
 }
+
+/**
+ * Probe through the root broker. Used when Beast API runs as its own unprivileged user,
+ * which can see neither the PM2 daemon nor most paths on the host. The broker answers
+ * only these fixed read-only lookups.
+ */
+export class BrokerHostProbe implements HostProbe {
+  constructor(private readonly broker: { request<T = unknown>(msg: import("./protocol.js").ProbeRequest): Promise<T> }) {}
+
+  private async ask<T>(msg: import("./protocol.js").ProbeRequest, fallback: T): Promise<T> {
+    try {
+      const reply = await this.broker.request<{ type: string; value: T }>(msg);
+      return reply.type === "probe" ? reply.value : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  unit(name: string): Promise<UnitInfo | null> {
+    return this.ask({ v: 1, type: "probe", what: "unit", name }, null);
+  }
+  pm2Apps(): Promise<Pm2App[] | null> {
+    return this.ask({ v: 1, type: "probe", what: "pm2Apps" }, null);
+  }
+  userId(name: string): Promise<number | null> {
+    return this.ask({ v: 1, type: "probe", what: "userId", name }, null);
+  }
+  groupId(name: string): Promise<number | null> {
+    return this.ask({ v: 1, type: "probe", what: "groupId", name }, null);
+  }
+  lstat(p: string): Promise<LstatResult> {
+    // "denied" makes the validator report the path as unverifiable (fail closed).
+    return this.ask<LstatResult>({ v: 1, type: "probe", what: "lstat", path: p }, "denied");
+  }
+}

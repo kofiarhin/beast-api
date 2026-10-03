@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { issueGrant } from "../src/admin/authorize.js";
 import { DisabledExecutor, DryRunExecutor, executionProblem } from "../src/admin/executor.js";
-import { agentSpawnProblem, toWireRequest } from "../src/admin/protocol.js";
+import { spawnRequestProblem, toWireRequest } from "../src/admin/protocol.js";
 import { MAX_OUTPUT_BYTES, sanitizeResult } from "../src/admin/result.js";
 import { validateOperation, type ValidatedOperation } from "../src/admin/validate.js";
 import { loadConfig } from "../src/config.js";
@@ -81,19 +81,26 @@ describe("executor interface", () => {
   it("the wire request carries typed fields only, never a command", async () => {
     const o = await op("pm2.restart", { app: "ideahub-api" });
     const wire = toWireRequest(o, grantFor(o));
-    expect(Object.keys(wire).sort()).toEqual(["facts", "grant", "op", "opVersion", "params", "requestId", "v"]);
+    expect(Object.keys(wire).sort()).toEqual(["facts", "grant", "op", "opVersion", "params", "requestId", "type", "v"]);
     expect(JSON.stringify(wire)).not.toMatch(/"(cmd|command|argv|args|shell)"/);
   });
 
-  it("validates agent.spawn requests structurally", () => {
-    const ok = { v: 1, jobId: "123e4567-e89b-12d3-a456-426614174000", kind: "agent", adapter: "claude", workspace: "/home/ubuntu/projects/app" };
-    expect(agentSpawnProblem(ok, "/home/ubuntu/projects")).toBeUndefined();
-    expect(agentSpawnProblem({ ...ok, kind: "verify", script: "test" }, "/home/ubuntu/projects")).toBeUndefined();
-    expect(agentSpawnProblem({ ...ok, adapter: "bash" }, "/home/ubuntu/projects")).toBeDefined();
-    expect(agentSpawnProblem({ ...ok, workspace: "/etc" }, "/home/ubuntu/projects")).toBeDefined();
-    expect(agentSpawnProblem({ ...ok, workspace: "/home/ubuntu/projects/../x" }, "/home/ubuntu/projects")).toBeDefined();
-    expect(agentSpawnProblem({ ...ok, kind: "verify", script: "deploy" }, "/home/ubuntu/projects")).toBeDefined();
-    expect(agentSpawnProblem({ ...ok, command: "id" }, "/home/ubuntu/projects")).toBeDefined();
+  it("validates spawn requests structurally", () => {
+    const root = "/home/ubuntu/projects";
+    const ok = { v: 1, type: "spawn", program: "claude", args: ["-p"], cwd: "/home/ubuntu/projects/app", input: "", env: {}, timeoutMs: 1000, captureFile: false };
+    expect(spawnRequestProblem(ok, root)).toBeUndefined();
+    expect(spawnRequestProblem({ ...ok, program: "npm", args: ["run", "--silent", "test"] }, root)).toBeUndefined();
+    expect(spawnRequestProblem({ ...ok, program: "bash" }, root)).toBeDefined();
+    expect(spawnRequestProblem({ ...ok, cwd: "/etc" }, root)).toBeDefined();
+    expect(spawnRequestProblem({ ...ok, cwd: "/home/ubuntu/projects/../x" }, root)).toBeDefined();
+    expect(spawnRequestProblem({ ...ok, cwd: root }, root)).toBeDefined();
+    expect(spawnRequestProblem({ ...ok, program: "npm", args: ["run", "--silent", "deploy"] }, root)).toBeDefined();
+    expect(spawnRequestProblem({ ...ok, program: "npm", args: ["exec", "x"] }, root)).toBeDefined();
+    expect(spawnRequestProblem({ ...ok, command: "id" }, root)).toBeDefined();
+    expect(spawnRequestProblem({ ...ok, env: { LD_PRELOAD: "/tmp/x.so" } }, root)).toBeDefined();
+    expect(spawnRequestProblem({ ...ok, program: "git", args: ["-C", "/home/ubuntu/projects/app", "status"] }, root)).toBeUndefined();
+    expect(spawnRequestProblem({ ...ok, program: "git", cwd: root, args: ["-C", root, "rev-parse"] }, root)).toBeUndefined();
+    expect(spawnRequestProblem({ ...ok, program: "git", args: ["-C", "/etc", "status"] }, root)).toBeDefined();
   });
 });
 
@@ -120,11 +127,16 @@ describe("result handling", () => {
 });
 
 describe("admin configuration", () => {
-  it("is off by default and refuses enforce in this phase", () => {
+  it("is off by default and allows enforce only with the broker runner", () => {
     expect(loadConfig({}).adminMode).toBe("off");
+    expect(loadConfig({}).runner).toBe("local");
     expect(loadConfig({ BEAST_ADMIN_MODE: "dry-run" }).adminMode).toBe("dry-run");
-    expect(() => loadConfig({ BEAST_ADMIN_MODE: "enforce" })).toThrow(/not available/);
+    expect(() => loadConfig({ BEAST_ADMIN_MODE: "enforce" })).toThrow(/BEAST_RUNNER=broker/);
+    expect(loadConfig({ BEAST_ADMIN_MODE: "enforce", BEAST_RUNNER: "broker" }).adminMode).toBe("enforce");
     expect(() => loadConfig({ BEAST_ADMIN_MODE: "root" })).toThrow();
+    expect(() => loadConfig({ BEAST_RUNNER: "sudo" })).toThrow();
+    expect(loadConfig({}).adminSharedLinearIdentity).toBe(false);
+    expect(() => loadConfig({ BEAST_ADMIN_SHARED_LINEAR_IDENTITY: "yes" })).toThrow();
   });
 
   it("accepts only Linear user ID lists for requesters and approvers", () => {
