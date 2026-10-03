@@ -47,7 +47,7 @@ npm run typecheck
 npm run build
 ```
 
-The production process runs the compiled `dist/server.js`.
+The production process runs the compiled `dist/server.js`. This directory is the live PM2 checkout: running `npm run build` here replaces production code that goes live on the next restart. Build release candidates in a separate checkout or worktree.
 
 ## Restart policy
 
@@ -84,6 +84,10 @@ Review the exact change and preserve existing routing. Apply registry changes an
 **Verification fails or every check is skipped:** completed is an agent-exit outcome, not acceptance of the ticket. Skipped checks count as passing and failed checks do not prevent the completed job state. Inspect the final diff, summary and required checks; distinguish new failures from pre-existing ones before deciding the next action.
 
 **Verification changes files:** project npm scripts run outside the agent sandbox as host processes. Use trusted scripts and inspect the workspace afterward; the recorded Git status/HEAD snapshot was taken before the scripts.
+
+## Admin operations
+
+Admin mode is off by default (`BEAST_ADMIN_MODE`). Enabling `dry-run` in production, enabling operations in `config/admin-policy.json`, adding Comment events to the Linear webhook and configuring requester/approver IDs are production changes that need explicit approval. The admin audit log is `data/admin-audit.jsonl`. See [ADMIN.md](ADMIN.md).
 
 ## Production changes
 

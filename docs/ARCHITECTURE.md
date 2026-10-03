@@ -32,6 +32,7 @@ The webhook validates and enqueues without waiting for the coding job. When conf
 - `src/agents/`: replaceable agent interface with Codex and Claude Code adapters.
 - `src/verify/`: post-run Git and npm verification.
 - `src/linear/`: Linear API access and status reporting.
+- `src/admin/`: controlled VPS administration: typed operation registry, validation, authorization, class C approvals, executor interface, audit log (off by default; dry-run only). See [ADMIN.md](ADMIN.md).
 - `src/logger.ts`: structured logging with secret-like fields redacted.
 
 ## Project registry
@@ -46,7 +47,11 @@ The shipped Beast mapping targets `/home/ubuntu/projects/beast` (VPS documentati
 
 `AgentAdapter` keeps orchestration independent from the coding agent. `BEAST_AGENT` selects the adapter (`codex`, the default, or `claude`); either launches one fresh CLI process per job. The agent receives the ticket context and validated workspace, but Linear credentials are removed from its environment.
 
-The Codex process uses `workspace-write` sandboxing. The Claude Code process runs with `acceptEdits`, no permission prompts (anything needing approval is denied), ignored user/project settings and MCP servers, and a narrow Bash allowlist; see the README for the exact rules. Beast does not grant the ordinary ticket workflow permission to commit, push, open pull requests, merge, deploy, alter system configuration, or write outside the registered workspace.
+The Codex process uses `workspace-write` sandboxing. The Claude Code process runs with `acceptEdits`, no permission prompts (anything needing approval is denied), ignored user/project settings and MCP servers, and a narrow Bash allowlist; see the README for the exact rules. Beast does not grant the ordinary ticket workflow permission to commit, push, open pull requests, merge, deploy, alter system configuration, or write outside the registered workspace. Agents and verification scripts run under `setpriv --no-new-privs`, so they cannot gain root through `sudo`, `su` or `pkexec`.
+
+## Admin boundary
+
+Admin requests (`Beast Admin` label) take a separate path from coding jobs: directive parsing, validation before any privilege escalation, Beast authorization, exact digest-bound approval for class C, a separate single-concurrency admin lane, and a privileged executor interface. In this phase the executor is disabled or dry-run only. See [ADMIN.md](ADMIN.md).
 
 ## Queue and persistence
 

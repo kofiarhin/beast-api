@@ -1,5 +1,15 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { SECRET_ENV_VARS } from "../config.js";
+
+/**
+ * Every child Beast starts (agents, verification scripts, Git, host probes) runs under
+ * `setpriv --no-new-privs`. With that flag set the kernel ignores setuid binaries, so
+ * `sudo`, `su` and `pkexec` cannot raise privileges anywhere in the child's process tree.
+ * There is deliberately no option to turn this off.
+ */
+export const SETPRIV_BIN = "/usr/bin/setpriv";
 
 export interface ExecResult {
   exitCode: number | null;
@@ -58,14 +68,54 @@ export function childEnv(extra: NodeJS.ProcessEnv = {}, base: NodeJS.ProcessEnv 
   return env;
 }
 
+/** Minimal environment for host probes: no inherited variables, so no inherited secrets. */
+export function minimalEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8", LC_ALL: "C.UTF-8", ...extra };
+}
+
+/** Resolve `cmd` the way spawn would, so a missing binary is still reported as a spawn error. */
+function resolveExecutable(cmd: string, cwd: string, env: NodeJS.ProcessEnv): string | undefined {
+  const executable = (file: string) => {
+    try {
+      fs.accessSync(file, fs.constants.X_OK);
+      return fs.statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (cmd.includes("/")) {
+    const file = path.resolve(cwd, cmd);
+    return executable(file) ? file : undefined;
+  }
+  for (const dir of (env.PATH ?? "").split(path.delimiter)) {
+    if (!dir) continue;
+    const file = path.join(dir, cmd);
+    if (executable(file)) return file;
+  }
+  return undefined;
+}
+
 function tail(text: string, max: number): string {
   return text.length > max ? text.slice(text.length - max) : text;
 }
 
-/** Run a command without a shell. Never throws; failures are reported in the result. */
+/**
+ * Run a command without a shell, under no-new-privs. Never throws; failures are reported
+ * in the result. If setpriv is unavailable the command is not run at all (fail closed).
+ */
 export function runCommand(cmd: string, args: string[], opts: ExecOptions): Promise<ExecResult> {
   const max = opts.maxOutputChars ?? 20_000;
   const started = Date.now();
+  const env = opts.env ?? childEnv();
+
+  const notRun = (spawnError: string): Promise<ExecResult> =>
+    Promise.resolve({ exitCode: null, signal: null, stdout: "", stderr: "", timedOut: false, aborted: false, durationMs: 0, spawnError });
+  if (!fs.existsSync(SETPRIV_BIN)) {
+    return notRun(`${SETPRIV_BIN} is unavailable; refusing to run ${cmd} without no-new-privs`);
+  }
+  if (!fs.existsSync(opts.cwd)) return notRun(`spawn ${cmd} ENOENT (working directory ${opts.cwd} does not exist)`);
+  const resolved = resolveExecutable(cmd, opts.cwd, env);
+  if (!resolved) return notRun(`spawn ${cmd} ENOENT`);
 
   return new Promise((resolve) => {
     let stdout = "";
@@ -75,9 +125,9 @@ export function runCommand(cmd: string, args: string[], opts: ExecOptions): Prom
     let stopping = false;
     let settled = false;
 
-    const child = spawn(cmd, args, {
+    const child = spawn(SETPRIV_BIN, ["--no-new-privs", "--", resolved, ...args], {
       cwd: opts.cwd,
-      env: opts.env ?? childEnv(),
+      env,
       shell: false,
       // Own process group so a timeout can kill the agent and everything it spawned.
       detached: true,

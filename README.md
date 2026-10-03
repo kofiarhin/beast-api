@@ -23,6 +23,7 @@ ChatGPT → Linear ticket → label "Beast Ready" → Linear webhook → Beast A
 - [Linear workflow](docs/LINEAR-WORKFLOW.md) — how an issue becomes an authorized Beast job and how results return to Linear.
 - [Operations](docs/OPERATIONS.md) — production layout, health checks, logs, restart rules and troubleshooting.
 - [Security](docs/SECURITY.md) — trust boundaries, secrets, workspace protection and production permissions.
+- [Controlled admin](docs/ADMIN.md) — typed VPS admin operations, risk classes, approvals and the future privileged executor (IDE-69).
 
 ---
 
@@ -373,6 +374,11 @@ never logged.
 | `BEAST_CLAUDE_BIN`           | `claude`                        | Claude Code binary                            |
 | `BEAST_CLAUDE_MODEL`         | _(Claude Code default)_         | Optional model override                       |
 | `LINEAR_API_URL`             | `https://api.linear.app/graphql`|                                               |
+| `BEAST_ADMIN_MODE`           | `off`                           | `off` or `dry-run`; `enforce` fails startup   |
+| `BEAST_ADMIN_LABEL`          | `Beast Admin`                   | Admin request label                           |
+| `BEAST_ADMIN_REQUESTERS`     | _(empty)_                       | Linear user IDs allowed to request            |
+| `BEAST_ADMIN_APPROVERS`      | _(empty)_                       | Linear user IDs allowed to approve class C    |
+| `BEAST_ADMIN_POLICY_FILE`    | `./config/admin-policy.json`    | Enabled admin operations (empty by default)   |
 
 See `.env.example`. Never commit `.env`.
 
@@ -433,3 +439,7 @@ content; persistence and restart recovery; log redaction.
   These policy instructions are not proof that every prohibited action is technically blocked.
 - Beast's Git helpers only inspect state. Host-run project verification scripts are outside
   the Codex sandbox and must be trusted.
+- Every child process runs under `setpriv --no-new-privs`: agents and verification scripts cannot
+  gain root through `sudo`, `su` or `pkexec`.
+- Admin operations are typed, opt-in per operation, validated before escalation and approved per
+  exact scope for class C. They are off by default and dry-run only in this phase ([ADMIN.md](docs/ADMIN.md)).

@@ -6,7 +6,7 @@ import type { AgentAdapter, AgentResult, AgentRunRequest } from "../src/agents/t
 import { createApp } from "../src/app.js";
 import type { LinearClient } from "../src/linear/client.js";
 import { LinearReporter } from "../src/linear/reporter.js";
-import type { LinearIssue } from "../src/linear/types.js";
+import type { LinearComment, LinearIssue } from "../src/linear/types.js";
 import { silentLogger } from "../src/logger.js";
 import { JobStore } from "../src/queue/store.js";
 import { Worker } from "../src/queue/worker.js";
@@ -66,6 +66,20 @@ export class FakeLinear implements LinearClient {
   }
   async addComment(issueId: string, body: string) {
     this.comments.push({ issueId, body });
+  }
+  /** Comments as Linear's API would return them, keyed by comment ID. */
+  apiComments: Record<string, LinearComment> = {};
+  viewerId: string | null = "beast-bot";
+  /** Who added a label, keyed by `${issueId}:${labelId}`. */
+  labelAdders: Record<string, string | null> = {};
+  async fetchComment(id: string) {
+    return this.apiComments[id] ?? null;
+  }
+  async fetchViewerId() {
+    return this.viewerId;
+  }
+  async fetchLabelAdder(issueId: string, labelId: string) {
+    return this.labelAdders[`${issueId}:${labelId}`] ?? null;
   }
 }
 

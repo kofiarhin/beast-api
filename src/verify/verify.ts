@@ -39,6 +39,12 @@ export interface VerifyOptions {
   approvalViolations?: string[];
 }
 
+/** Output that shows a verification script tried to gain root (blocked by no-new-privs). */
+const ESCALATION_ATTEMPT = /"no new privileges" flag is set|\bsu: Authentication failure\b|pkexec must be setuid root|\bsudo: .*(?:a terminal is required|a password is required|unable to)/i;
+
+export const ESCALATION_BLOCKED_DETAIL =
+  "verification script attempted privilege escalation (sudo/su/pkexec); blocked by no-new-privs. Beast never runs verification with root privileges";
+
 async function readScripts(workspacePath: string): Promise<Record<string, string> | null> {
   try {
     const pkg = JSON.parse(await fs.readFile(path.join(workspacePath, "package.json"), "utf8")) as {
@@ -91,12 +97,14 @@ export async function verifyWorkspace(opts: VerifyOptions): Promise<Verification
       env: childEnv({ CI: "true", FORCE_COLOR: "0" }),
       maxOutputChars: 4_000,
     });
+    const passed = !res.timedOut && res.exitCode === 0;
+    const escalation = !passed && ESCALATION_ATTEMPT.test(res.stdout + "\n" + res.stderr);
     checks.push({
       name,
-      status: res.timedOut ? "timed_out" : res.exitCode === 0 ? "passed" : "failed",
+      status: res.timedOut ? "timed_out" : passed ? "passed" : "failed",
       exitCode: res.exitCode,
       durationMs: res.durationMs,
-      detail: res.spawnError && redactSecrets(res.spawnError),
+      detail: escalation ? ESCALATION_BLOCKED_DETAIL : res.spawnError && redactSecrets(res.spawnError),
       outputTail: redactSecrets((res.stdout + "\n" + res.stderr).trim().slice(-2_000)),
     });
   }
