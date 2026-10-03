@@ -24,6 +24,7 @@ ChatGPT → Linear ticket → label "Beast Ready" → Linear webhook → Beast A
 - [Operations](docs/OPERATIONS.md) — production layout, health checks, logs, restart rules and troubleshooting.
 - [Security](docs/SECURITY.md) — trust boundaries, secrets, workspace protection and production permissions.
 - [Controlled admin](docs/ADMIN.md) — typed VPS admin operations, risk classes, approvals and the future privileged executor (IDE-69).
+- [Controlled deployment](docs/DEPLOY.md) — approval-gated production deployments of exact commits to registered targets, with verification, health checks and rollback (IDE-82).
 
 ---
 

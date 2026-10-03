@@ -24,6 +24,9 @@ const validate = (op: unknown, params?: unknown, c: ValidationContext = ctx) => 
 describe("operation registry", () => {
   it("contains exactly the approved v1 operations (snapshot: any change shows up in review)", () => {
     expect(operationIds().sort()).toEqual([
+      "deploy.rollback",
+      "deploy.run",
+      "deploy.status",
       "filesystem.chown",
       "filesystem.inspect",
       "nginx.reload",
@@ -38,7 +41,7 @@ describe("operation registry", () => {
   });
 
   it("has no free-form string or argument-list parameter types", () => {
-    const allowed = new Set(["unit", "pm2App", "path", "user", "group", "package", "int", "bool", "enum"]);
+    const allowed = new Set(["unit", "pm2App", "path", "user", "group", "package", "deployTarget", "commit", "int", "bool", "enum"]);
     for (const id of operationIds()) {
       for (const spec of Object.values(getOperation(id)!.params) as ParamSpec[]) expect(allowed.has(spec.type)).toBe(true);
     }

@@ -17,6 +17,9 @@ import { BrokerClient } from "./executor/client.js";
 import { BrokerCommandRunner } from "./executor/runner.js";
 import { killActiveProcessGroups, setCommandRunner } from "./util/exec.js";
 
+/** Upper bound for one admin operation over the executor socket (deployments included). */
+const ADMIN_EXECUTION_TIMEOUT_MS = 90 * 60 * 1000;
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger({ service: "beast-api" });
@@ -73,7 +76,10 @@ async function main(): Promise<void> {
     if (audit.broken) logger.error("admin audit log failed verification; admin operations cannot run", { error: audit.broken });
     if (!config.linearApiKey) logger.warn("admin mode enabled without LINEAR_API_KEY; every admin request will be denied");
     const probe: HostProbe = broker ? new BrokerHostProbe(broker) : new SystemHostProbe();
-    const executor: PrivilegedExecutor = config.adminMode === "enforce" && broker ? new BrokerExecutor(broker) : new DryRunExecutor();
+    // Admin operations get their own connection timeout: a production deployment (IDE-82)
+    // verifies, installs, builds and health-checks, which can take far longer than a probe.
+    const executor: PrivilegedExecutor =
+      config.adminMode === "enforce" && broker ? new BrokerExecutor(new BrokerClient(config.executorSocket, ADMIN_EXECUTION_TIMEOUT_MS)) : new DryRunExecutor();
     admin = new AdminService({
       label: config.adminLabel,
       readyLabel: config.readyLabel,

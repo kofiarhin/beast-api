@@ -14,6 +14,8 @@ export type ParamSpec = { optional?: boolean } & (
   | { type: "user" }
   | { type: "group" }
   | { type: "package" }
+  | { type: "deployTarget" }
+  | { type: "commit" }
   | { type: "int"; min: number; max: number }
   | { type: "bool" }
   | { type: "enum"; values: readonly string[] }
@@ -138,6 +140,34 @@ const DEFINITIONS: OperationDefinition[] = [
     },
     classify: (p, ctx) => ({ riskClass: "C", protected: isProtectedPath(String(p.path), ctx, p.recursive === true) }),
     summarize: (p) => `${p.recursive ? "recursively " : ""}change owner of ${p.path} to ${p.owner}:${p.group}`,
+  },
+  // ---- Production deployment (IDE-82) ----
+  // Targets and their procedures are defined only in the executor's root-owned deployment
+  // file; a ticket can name a target and an exact commit, nothing else. Every deployment
+  // and rollback is class C, so each one needs its own exact approval.
+  {
+    id: "deploy.status",
+    version: 1,
+    description: "Show a deployment target's definition, deployed commit, PM2 state and health",
+    params: { target: { type: "deployTarget" } },
+    classify: fixed("A"),
+    summarize: (p) => `show deployment status of ${p.target}`,
+  },
+  {
+    id: "deploy.run",
+    version: 1,
+    description: "Deploy an exact commit to a registered deployment target (verify, deploy, health check, automatic rollback)",
+    params: { target: { type: "deployTarget" }, commit: { type: "commit" } },
+    classify: fixed("C"),
+    summarize: (p) => `deploy commit ${p.commit} to ${p.target}`,
+  },
+  {
+    id: "deploy.rollback",
+    version: 1,
+    description: "Roll a deployment target back to the commit that preceded Beast's last deployment of it",
+    params: { target: { type: "deployTarget" } },
+    classify: fixed("C"),
+    summarize: (p) => `roll back ${p.target} to the commit before its last Beast deployment`,
   },
 ];
 

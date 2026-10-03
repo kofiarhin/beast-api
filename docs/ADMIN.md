@@ -60,6 +60,9 @@ Every operation is **disabled until listed in `enabledOperations`** in `config/a
 | `pm2.restart` | B | `app` |
 | `nginx.reload` | B | none; reloads only after `nginx -t` passes |
 | `filesystem.chown` | C | `path`, `owner`, `group`, `recursive` (explicit `true`/`false`) |
+| `deploy.status` | A | `target` (see [DEPLOY.md](DEPLOY.md)) |
+| `deploy.run` | C, always | `target`, `commit` (full 40-hex id) |
+| `deploy.rollback` | C, always | `target` |
 
 `profile.update` is **not** an admin operation. The existing VPS profile updater stays separate and unchanged and runs through its established mechanism.
 
@@ -167,7 +170,8 @@ Admin mode also needs `LINEAR_API_KEY` (to verify requesters and approvers), and
 | Executor units | `/etc/systemd/system/beast-executor.{socket,service}` |
 | Executor code | `/opt/beast-executor` (root-owned copy of `dist/`) |
 | Executor policy | `/etc/beast-executor/policy.json` (from `deploy/executor-policy.json`) |
-| Executor state (used approval digests, capture files) | `/var/lib/beast-executor` |
+| Deployment definitions (IDE-82) | `/etc/beast-executor/deployments.json` (from `deploy/executor-deployments.json`) |
+| Executor state (used approval digests, capture files, deployment history) | `/var/lib/beast-executor` |
 | Agent account | `beast-agent`. Its own Claude/Codex logins live in its home. It has ACL access to `/home/ubuntu/projects` (default ACLs keep `ubuntu` access to files it creates). |
 
 Updating the executor means rebuilding, copying `dist/` to `/opt/beast-executor` as root, then restarting `beast-executor`. That restart stops any running job, so do it only when the queue is idle.

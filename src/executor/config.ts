@@ -7,6 +7,10 @@ import type { SpawnProgram } from "../admin/protocol.js";
  */
 export interface BrokerConfig {
   policyFile: string;
+  /** Root-owned production deployment definitions (IDE-82). */
+  deploymentsFile: string;
+  /** Deployment checkouts must live strictly under one of these directories. */
+  deployRoots: readonly string[];
   stateDir: string;
   workspaceRoot: string;
   /** Unprivileged user that agents, verification scripts and Git run as. */
@@ -23,6 +27,7 @@ export interface BrokerConfig {
     getent: string;
     pm2: string;
     tail: string;
+    rm: string;
   }>;
   nginxLogs: Readonly<{ access: string; error: string }>;
   /** Beast's own code, data, policy and executor locations: always protected. */
@@ -35,6 +40,8 @@ export function loadBrokerConfig(env: NodeJS.ProcessEnv = process.env): BrokerCo
   const get = (name: string, fallback: string) => env[name]?.trim() || fallback;
   return Object.freeze({
     policyFile: get("BEAST_EXECUTOR_POLICY", "/etc/beast-executor/policy.json"),
+    deploymentsFile: get("BEAST_EXECUTOR_DEPLOYMENTS", "/etc/beast-executor/deployments.json"),
+    deployRoots: Object.freeze(["/home/ubuntu/apps"]),
     stateDir: get("BEAST_EXECUTOR_STATE_DIR", "/var/lib/beast-executor"),
     workspaceRoot: WORKSPACE_ROOT,
     agentUser: get("BEAST_EXECUTOR_AGENT_USER", "beast-agent"),
@@ -54,6 +61,7 @@ export function loadBrokerConfig(env: NodeJS.ProcessEnv = process.env): BrokerCo
       getent: "/usr/bin/getent",
       pm2: "/usr/bin/pm2",
       tail: "/usr/bin/tail",
+      rm: "/usr/bin/rm",
     }),
     nginxLogs: Object.freeze({ access: "/var/log/nginx/access.log", error: "/var/log/nginx/error.log" }),
     beastPaths: Object.freeze([
