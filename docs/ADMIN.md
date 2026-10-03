@@ -33,7 +33,7 @@ Beast admin params: {"app":"ideahub-api"}
 ```
 
 - The params line is optional for operations without parameters and must be a single-line JSON object.
-- The user who added the label is looked up through the Linear API and must be in `BEAST_ADMIN_REQUESTERS`.
+- The user who added the label must be in `BEAST_ADMIN_REQUESTERS`. Beast takes that user from the signed webhook event's `actor` (only when it is a user, not an app or integration). Linear does not always record label changes in issue history, so the history lookup is only a fallback. If neither identifies a user, the request is denied.
 - An issue cannot carry both `Beast Admin` and `Beast Ready`. A coding job on such an issue is blocked, and the admin request is denied.
 
 ## Risk classes

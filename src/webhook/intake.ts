@@ -28,6 +28,14 @@ export interface LinearWebhookPayload {
     labelIds?: string[];
   };
   updatedFrom?: { labelIds?: string[] } & Record<string, unknown>;
+  /** Who caused this event. Part of the signed payload. */
+  actor?: { id?: unknown; type?: unknown } | null;
+}
+
+/** The Linear user behind a signed event, or null for integrations, apps and unknown actors. */
+export function eventUserId(payload: LinearWebhookPayload): string | null {
+  const a = payload.actor;
+  return a && a.type === "user" && typeof a.id === "string" && /^[A-Za-z0-9-]{1,64}$/.test(a.id) ? a.id : null;
 }
 
 export type IntakeResult =
@@ -109,7 +117,7 @@ export async function handleLinearEvent(deps: IntakeDeps, deliveryId: string, pa
   // Admin requests never reach the coding path, and coding jobs never run on admin issues.
   if (adminLabel) {
     const adminResult =
-      deps.admin && isTrigger(payload, adminLabel) ? await deps.admin.handleIssueTrigger(deliveryId, issue, adminLabel) : undefined;
+      deps.admin && isTrigger(payload, adminLabel) ? await deps.admin.handleIssueTrigger(deliveryId, issue, adminLabel, eventUserId(payload)) : undefined;
     if (readyLabel && isTrigger(payload, readyLabel)) {
       const reason = `Issue carries both "${deps.readyLabel}" and "${deps.adminLabel}"; coding and admin requests must be separate issues`;
       const job = deps.store.createJob({

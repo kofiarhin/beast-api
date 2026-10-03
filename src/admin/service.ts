@@ -103,17 +103,22 @@ export class AdminService {
   }
 
   /** The admin label was newly added to an issue. */
-  async handleIssueTrigger(deliveryId: string, issue: LinearIssue, adminLabel: LinearLabel): Promise<AdminOutcome> {
+  /**
+   * `eventUserId` is the user in the signed webhook event that added the label. Linear does
+   * not always record label changes in issue history, so it is the primary source; the
+   * history lookup is the fallback, and with neither the request is denied.
+   */
+  async handleIssueTrigger(deliveryId: string, issue: LinearIssue, adminLabel: LinearLabel, eventUserId: string | null = null): Promise<AdminOutcome> {
     if (this.intake.has(issue.id)) return { outcome: "ignored", reason: "an admin request for this issue is already being processed" };
     this.intake.add(issue.id);
     try {
-      return await this.intakeRequest(deliveryId, issue, adminLabel);
+      return await this.intakeRequest(deliveryId, issue, adminLabel, eventUserId);
     } finally {
       this.intake.delete(issue.id);
     }
   }
 
-  private async intakeRequest(deliveryId: string, issue: LinearIssue, adminLabel: LinearLabel): Promise<AdminOutcome> {
+  private async intakeRequest(deliveryId: string, issue: LinearIssue, adminLabel: LinearLabel, eventUserId: string | null): Promise<AdminOutcome> {
     await this.sweepExpired();
     const active = this.deps.store.findActiveAdminByIssue(issue.id);
     if (active) return { outcome: "ignored", reason: `issue already has active admin job ${active.id}` };
@@ -139,8 +144,9 @@ export class AdminService {
       }
       if (!this.deps.linear.configured) return this.close(job, "denied", "Linear API is not configured, so the requester cannot be verified");
 
-      const requesterId = await this.deps.linear.fetchLabelAdder(issue.id, adminLabel.id).catch(() => null);
+      const requesterId = eventUserId ?? (await this.deps.linear.fetchLabelAdder(issue.id, adminLabel.id).catch(() => null));
       job = this.deps.store.updateAdminJob(job.id, { requesterId });
+      this.audit("request.requester", job, { requesterId, source: eventUserId ? "signed webhook actor" : "issue history" });
       if (!requesterId) return this.close(job, "denied", "Could not determine unambiguously who added the admin label");
       if (!isRequester(this.deps.auth, requesterId)) return this.close(job, "denied", "The user who added the admin label is not an authorized requester");
 
