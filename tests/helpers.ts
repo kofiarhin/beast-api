@@ -108,13 +108,14 @@ export class FakeAgent implements AgentAdapter {
   }
 }
 
-export function webhookBody(issue: LinearIssue, opts: { action?: string; previousLabelIds?: string[]; timestamp?: number } = {}) {
+export function webhookBody(issue: LinearIssue, opts: { action?: string; previousLabelIds?: string[]; timestamp?: number; actor?: unknown } = {}) {
   return JSON.stringify({
     action: opts.action ?? "create",
     type: "Issue",
     webhookTimestamp: opts.timestamp ?? Date.now(),
     data: { ...issue, labelIds: issue.labels.map((l) => l.id) },
     ...(opts.previousLabelIds ? { updatedFrom: { labelIds: opts.previousLabelIds } } : {}),
+    ...(opts.actor !== undefined ? { actor: opts.actor } : {}),
   });
 }
 

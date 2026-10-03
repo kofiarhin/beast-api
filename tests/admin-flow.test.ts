@@ -289,6 +289,32 @@ describe("class C: exact, scope-bound approval", () => {
     expect(h.executor.executed.map((e) => e.op.protected)).toEqual([true]);
   });
 
+  it("takes the requester from the signed webhook actor when issue history has no record", async () => {
+    h = makeAdminHarness();
+    const issue = adminIssue("nginx.test");
+    h.linear.issues[issue.id] = issue;
+    h.linear.labelAdders[`${issue.id}:label-admin`] = null;
+    await post(webhookBody(issue, { actor: { id: REQUESTER, type: "user" } }));
+    await h.admin.idle();
+    expect(h.executor.executed).toHaveLength(1);
+  });
+
+  it("ignores non-user and unauthorized webhook actors", async () => {
+    h = makeAdminHarness();
+    const issue = adminIssue("nginx.test");
+    h.linear.issues[issue.id] = issue;
+    h.linear.labelAdders[`${issue.id}:label-admin`] = null;
+    await post(webhookBody(issue, { actor: { id: REQUESTER, type: "OauthClient" } }));
+    await h.admin.idle();
+    expect(h.store.listAdminJobs()[0]).toMatchObject({ state: "denied" });
+    const other = { ...issue, id: "admin-issue-2" };
+    h.linear.issues[other.id] = other;
+    await post(webhookBody(other, { actor: { id: "someone-else", type: "user" } }));
+    await h.admin.idle();
+    expect(h.store.listAdminJobs()[1]).toMatchObject({ state: "denied" });
+    expect(h.executor.executed).toHaveLength(0);
+  });
+
   it("allows one person to request and approve (decision Q7)", async () => {
     h = makeAdminHarness({ requesters: ["solo"], approvers: ["solo"] });
     const dir = makeDir();
@@ -389,12 +415,12 @@ describe("audit log", () => {
     const check = verifyAuditChain(h.audit.file);
     expect(check).toMatchObject({ ok: true });
     const events = fs.readFileSync(h.audit.file, "utf8").trim().split("\n").map((l) => JSON.parse(l).event);
-    expect(events).toEqual(["request.received", "request.authorized", "execution.started", "execution.finished"]);
+    expect(events).toEqual(["request.received", "request.requester", "request.authorized", "execution.started", "execution.finished"]);
 
     const lines = fs.readFileSync(h.audit.file, "utf8").split("\n");
-    lines[1] = lines[1]!.replace("nginx.test", "nginx.reload");
+    lines[2] = lines[2]!.replace("nginx.test", "nginx.reload");
     fs.writeFileSync(h.audit.file, lines.join("\n"));
-    expect(verifyAuditChain(h.audit.file)).toMatchObject({ ok: false, line: 2 });
+    expect(verifyAuditChain(h.audit.file)).toMatchObject({ ok: false, line: 3 });
     expect(() => new AuditLog(h.audit.file).append("x", {})).toThrow(/failed verification/);
   });
 
