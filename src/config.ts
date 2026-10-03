@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { AdminMode } from "./admin/types.js";
 
 /** Beast only ever listens on loopback. This is intentionally not configurable. */
 export const HOST = "127.0.0.1";
@@ -24,6 +25,11 @@ export interface Config {
   codexModel: string | undefined;
   claudeBin: string;
   claudeModel: string | undefined;
+  adminMode: AdminMode;
+  adminLabel: string;
+  adminRequesters: string[];
+  adminApprovers: string[];
+  adminPolicyFile: string;
 }
 
 /** Environment variables that must never be passed to child processes (agents, verification). */
@@ -41,6 +47,25 @@ function positiveInt(value: string | undefined, fallback: number, name: string):
     throw new Error(`${name} must be a positive integer`);
   }
   return parsed;
+}
+
+const LINEAR_USER_ID = /^[A-Za-z0-9-]{1,64}$/;
+
+function userIdList(value: string | undefined, name: string): string[] {
+  const ids = (value ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const id of ids) if (!LINEAR_USER_ID.test(id)) throw new Error(`${name} must be a comma-separated list of Linear user IDs`);
+  return [...new Set(ids)];
+}
+
+/** `enforce` (real privileged execution) does not exist in this phase; asking for it is a startup error. */
+function adminMode(value: string | undefined): AdminMode {
+  const mode = (nonEmpty(value) ?? "off").toLowerCase();
+  if (mode === "off" || mode === "dry-run") return mode;
+  if (mode === "enforce") throw new Error("BEAST_ADMIN_MODE=enforce is not available: privileged execution has not been activated");
+  throw new Error("BEAST_ADMIN_MODE must be off or dry-run");
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): Config {
@@ -69,5 +94,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, cwd = process.c
     codexModel: nonEmpty(env.BEAST_CODEX_MODEL),
     claudeBin: nonEmpty(env.BEAST_CLAUDE_BIN) ?? "claude",
     claudeModel: nonEmpty(env.BEAST_CLAUDE_MODEL),
+    adminMode: adminMode(env.BEAST_ADMIN_MODE),
+    adminLabel: nonEmpty(env.BEAST_ADMIN_LABEL) ?? "Beast Admin",
+    adminRequesters: userIdList(env.BEAST_ADMIN_REQUESTERS, "BEAST_ADMIN_REQUESTERS"),
+    adminApprovers: userIdList(env.BEAST_ADMIN_APPROVERS, "BEAST_ADMIN_APPROVERS"),
+    adminPolicyFile: path.resolve(cwd, nonEmpty(env.BEAST_ADMIN_POLICY_FILE) ?? "config/admin-policy.json"),
   };
 }

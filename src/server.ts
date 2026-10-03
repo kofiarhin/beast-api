@@ -1,4 +1,9 @@
 import path from "node:path";
+import { AuditLog } from "./admin/audit.js";
+import { DryRunExecutor } from "./admin/executor.js";
+import { loadPolicy } from "./admin/policy.js";
+import { SystemHostProbe } from "./admin/probe.js";
+import { AdminService } from "./admin/service.js";
 import { createAgentAdapter } from "./agents/index.js";
 import { createApp } from "./app.js";
 import { HOST, loadConfig } from "./config.js";
@@ -48,6 +53,34 @@ async function main(): Promise<void> {
     verifyScripts: config.verifyScripts,
   });
 
+  // Controlled admin (IDE-69): off by default. Only `dry-run` exists in this phase, so no
+  // executor here can perform a privileged action.
+  let admin: AdminService | undefined;
+  if (config.adminMode === "dry-run") {
+    const policy = loadPolicy(config.adminPolicyFile);
+    if (!policy.ok) logger.error("admin policy invalid; every admin request will be denied", { error: policy.error });
+    const audit = new AuditLog(path.join(config.dataDir, "admin-audit.jsonl"));
+    if (audit.broken) logger.error("admin audit log failed verification; admin operations cannot run", { error: audit.broken });
+    if (!config.linearApiKey) logger.warn("admin mode enabled without LINEAR_API_KEY; every admin request will be denied");
+    admin = new AdminService({
+      label: config.adminLabel,
+      readyLabel: config.readyLabel,
+      auth: { requesters: config.adminRequesters, approvers: config.adminApprovers },
+      policy,
+      probe: new SystemHostProbe(),
+      executor: new DryRunExecutor(),
+      audit,
+      store,
+      linear,
+      logger: logger.child({ component: "admin" }),
+      beastPaths: [path.resolve(import.meta.dirname, ".."), config.dataDir, config.adminPolicyFile],
+    });
+    for (const job of store.recoverInterruptedAdmin()) {
+      logger.warn("interrupted admin job marked failed", { adminJobId: job.id, issueId: job.issueIdentifier });
+    }
+    setInterval(() => void admin?.sweepExpired().catch(() => undefined), 60_000).unref();
+  }
+
   const app = createApp({
     store,
     registry,
@@ -59,6 +92,8 @@ async function main(): Promise<void> {
     readyLabel: config.readyLabel,
     agent: adapter.name,
     onQueued: () => worker.kick(),
+    adminLabel: config.adminLabel,
+    admin,
   });
 
   const server = app.listen(config.port, HOST, () => {
@@ -66,10 +101,12 @@ async function main(): Promise<void> {
       host: HOST,
       port: config.port,
       agent: adapter.name,
+      adminMode: config.adminMode,
       projects: registry.list().map((p) => p.name),
     });
     // Resume jobs that were queued before a restart.
     worker.kick();
+    admin?.kick();
   });
 
   // Last resort: whatever path Beast exits by, no agent process group may outlive it.
@@ -82,7 +119,7 @@ async function main(): Promise<void> {
     logger.info("shutting down", { signal });
     server.close();
     // Stop the running agent (its whole process group), record the job as failed, then exit.
-    void worker.shutdown().finally(() => process.exit(0));
+    void Promise.all([worker.shutdown(), admin?.shutdown()]).finally(() => process.exit(0));
     setTimeout(() => process.exit(0), 15_000).unref();
   };
   process.on("SIGINT", () => shutdown("SIGINT"));

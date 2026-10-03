@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from "express";
 import { createHash } from "node:crypto";
+import type { AdminService } from "./admin/service.js";
 import type { LinearReporter } from "./linear/reporter.js";
 import type { LinearClient } from "./linear/client.js";
 import type { Logger } from "./logger.js";
@@ -19,7 +20,11 @@ export interface AppDeps {
   readyLabel: string;
   agent: string;
   onQueued: () => void;
+  adminLabel?: string;
+  admin?: AdminService;
 }
+
+const DEFAULT_ADMIN_LABEL = "Beast Admin";
 
 export function createApp(deps: AppDeps): express.Express {
   const app = express();
@@ -78,7 +83,7 @@ export function createApp(deps: AppDeps): express.Express {
 
     inFlight.add(deliveryId);
     try {
-      const result = await handleLinearEvent(deps, deliveryId, payload);
+      const result = await handleLinearEvent({ ...deps, adminLabel: deps.adminLabel ?? DEFAULT_ADMIN_LABEL }, deliveryId, payload);
       deps.store.recordDelivery(deliveryId, {
         receivedAt: new Date().toISOString(),
         outcome: result.outcome,

@@ -74,13 +74,16 @@ describe("project registry", () => {
   it("loads the shipped registry, quarantining the out-of-root Beast API entry", async () => {
     const { loadRegistry } = await import("../src/registry/registry.js");
     const reg = loadRegistry(path.resolve(import.meta.dirname, "../config/projects.json"), "/home/ubuntu/projects");
-    expect(reg.list().map((p) => [p.name, p.workspace])).toEqual([
-      ["Beast", "/home/ubuntu/projects/beast"],
-      ["DevKofi", "/home/ubuntu/projects/devkofi"],
-      ["IdeaHub API", "/home/ubuntu/projects/ideahub-api"],
-      ["LeadRadar", "/home/ubuntu/projects/leadradar"],
-      ["Beast API", "/home/ubuntu/apps/beast-api"],
-    ]);
+    // The live registry may gain projects; check the baseline entries rather than the exact list.
+    expect(reg.list().map((p) => [p.name, p.workspace])).toEqual(
+      expect.arrayContaining([
+        ["Beast", "/home/ubuntu/projects/beast"],
+        ["DevKofi", "/home/ubuntu/projects/devkofi"],
+        ["IdeaHub API", "/home/ubuntu/projects/ideahub-api"],
+        ["LeadRadar", "/home/ubuntu/projects/leadradar"],
+        ["Beast API", "/home/ubuntu/apps/beast-api"],
+      ]),
+    );
     expect(reg.outsideRoot).toEqual(["Beast API"]);
     expect(await validateWorkspace(reg, reg.resolve({ name: "Beast API" })!)).toMatchObject({ ok: false, code: "outside_root" });
   });

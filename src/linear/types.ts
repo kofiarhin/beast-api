@@ -17,3 +17,12 @@ export interface LinearIssue {
   project: LinearProject | null;
   labels: LinearLabel[];
 }
+
+export interface LinearComment {
+  id: string;
+  body: string;
+  issueId: string | null;
+  /** Null for comments without a human author (integrations, deleted users). */
+  userId: string | null;
+  edited: boolean;
+}

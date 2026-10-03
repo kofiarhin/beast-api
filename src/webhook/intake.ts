@@ -1,3 +1,4 @@
+import type { AdminService } from "../admin/service.js";
 import type { LinearClient } from "../linear/client.js";
 import type { LinearReporter } from "../linear/reporter.js";
 import type { LinearIssue, LinearLabel } from "../linear/types.js";
@@ -14,6 +15,9 @@ export interface LinearWebhookPayload {
   url?: string;
   data?: {
     id?: string;
+    /** Comment events only. */
+    body?: string;
+    issueId?: string;
     identifier?: string;
     title?: string;
     description?: string | null;
@@ -29,7 +33,8 @@ export interface LinearWebhookPayload {
 export type IntakeResult =
   | { outcome: "ignored"; reason: string }
   | { outcome: "queued"; jobId: string }
-  | { outcome: "blocked"; jobId: string; reason: string };
+  | { outcome: "blocked"; jobId: string; reason: string }
+  | { outcome: "admin"; jobId: string; state: string };
 
 export interface IntakeDeps {
   store: JobStore;
@@ -40,6 +45,10 @@ export interface IntakeDeps {
   readyLabel: string;
   agent: string;
   onQueued: () => void;
+  /** Label that marks an admin request. Checked even when admin mode is off (labels are mutually exclusive). */
+  adminLabel: string;
+  /** Present only when admin mode is enabled. */
+  admin?: AdminService;
 }
 
 const sameLabel = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -74,6 +83,12 @@ function isTrigger(payload: LinearWebhookPayload, readyLabel: LinearLabel): bool
 }
 
 export async function handleLinearEvent(deps: IntakeDeps, deliveryId: string, payload: LinearWebhookPayload): Promise<IntakeResult> {
+  if (payload.type === "Comment") {
+    if (!deps.admin) return { outcome: "ignored", reason: "admin operations are disabled" };
+    if (payload.action !== "create") return { outcome: "ignored", reason: "only new comments can approve admin operations" };
+    if (!payload.data?.id) return { outcome: "ignored", reason: "payload has no comment id" };
+    return deps.admin.handleComment(deliveryId, payload.data.id, payload.data.body);
+  }
   if (payload.type !== "Issue") return { outcome: "ignored", reason: `unsupported event type ${payload.type ?? "unknown"}` };
   if (payload.action !== "create" && payload.action !== "update") {
     return { outcome: "ignored", reason: `unsupported action ${payload.action ?? "unknown"}` };
@@ -88,8 +103,34 @@ export async function handleLinearEvent(deps: IntakeDeps, deliveryId: string, pa
 
   const log = deps.logger.child({ issueId: issue.identifier, deliveryId });
 
-  // Authorization: the ready label must be present.
   const readyLabel = issue.labels.find((l) => sameLabel(l.name, deps.readyLabel));
+  const adminLabel = issue.labels.find((l) => sameLabel(l.name, deps.adminLabel));
+
+  // Admin requests never reach the coding path, and coding jobs never run on admin issues.
+  if (adminLabel) {
+    const adminResult =
+      deps.admin && isTrigger(payload, adminLabel) ? await deps.admin.handleIssueTrigger(deliveryId, issue, adminLabel) : undefined;
+    if (readyLabel && isTrigger(payload, readyLabel)) {
+      const reason = `Issue carries both "${deps.readyLabel}" and "${deps.adminLabel}"; coding and admin requests must be separate issues`;
+      const job = deps.store.createJob({
+        deliveryId,
+        issue,
+        project: issue.project?.name ?? null,
+        workspace: null,
+        agent: deps.agent,
+        state: "blocked",
+        reason,
+        nextAction: `Remove one of the two labels, then re-add "${deps.readyLabel}" if this is a coding task.`,
+        finishedAt: new Date().toISOString(),
+      });
+      log.warn("job blocked: admin and ready labels together", { jobId: job.id, jobState: "blocked" });
+      void deps.reporter.blocked(job, reason);
+      return { outcome: "blocked", jobId: job.id, reason };
+    }
+    return adminResult ?? { outcome: "ignored", reason: deps.admin ? "admin label was not newly added" : "admin operations are disabled" };
+  }
+
+  // Authorization: the ready label must be present.
   if (!readyLabel) {
     log.info("issue not authorized; ignored");
     return { outcome: "ignored", reason: `issue does not have the "${deps.readyLabel}" label` };
