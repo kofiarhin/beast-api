@@ -1,0 +1,23 @@
+# Beast privileged executor (IDE-69): typed admin operations as root, and agent/verification/Git
+# processes started as the unprivileged beast-agent user. Code is a root-owned copy in /opt.
+# Stopping or restarting this unit stops any running Beast job (same control group).
+[Unit]
+Description=Beast privileged executor
+Requires=beast-executor.socket
+After=beast-executor.socket
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/node /opt/beast-executor/dist/executor/main.js
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=BEAST_EXECUTOR_POLICY=/etc/beast-executor/policy.json
+Environment=BEAST_EXECUTOR_AGENT_USER=beast-agent
+Environment=BEAST_EXECUTOR_PM2_USER=ubuntu
+StateDirectory=beast-executor
+StateDirectoryMode=0700
+KillMode=control-group
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=2

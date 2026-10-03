@@ -1,0 +1,14 @@
+# Beast privileged executor socket (IDE-69). Only root and the `beast` group can connect.
+[Unit]
+Description=Beast privileged executor socket
+
+[Socket]
+ListenStream=/run/beast-executor/executor.sock
+SocketUser=root
+SocketGroup=beast
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

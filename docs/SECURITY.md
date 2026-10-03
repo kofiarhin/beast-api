@@ -18,7 +18,12 @@ A Linear ticket is not enough to execute code. Beast requires a valid signed web
 
 **Agent -> host:** Codex is launched with `workspace-write` sandboxing. Claude Code is launched with `acceptEdits` and no permission prompts, so file access outside the workspace and Bash commands outside a narrow allowlist (npm test/lint/typecheck/build, read-only Git) are denied; user/project settings, hooks, MCP servers (including Linear) and web tools are disabled, and sessions are not persisted. Its OS sandbox needs `bubblewrap` and `socat`; both are now installed on the VPS, but whether that layer is active has not been re-verified, so treat the allowlist as what restricts Bash. These rules are defence in depth, not a replacement for the post-run Git approval checks. Child environments inherit the host environment except `LINEAR_API_KEY` and `LINEAR_WEBHOOK_SECRET`. This filtering is not a general credential allowlist; unrelated credentials may remain.
 
-**No privilege escalation for ordinary jobs:** every child process Beast starts (agents, verification scripts, Git, host probes) runs under `setpriv --no-new-privs`, so the kernel refuses `sudo`, `su` and `pkexec` even though the `ubuntu` user has unrestricted sudo. If `setpriv` is unavailable nothing runs. Verification that relies on sudo fails with a clear reason. Jobs still run as `ubuntu`, so they could plant files (for example `~/.bashrc`) that a later privileged human session runs; separate service users at activation close this.
+**No privilege escalation for ordinary jobs:**
+- In production every child process (agents, verification scripts, Git) runs as `beast-agent`, started by `beast-executor` through `setpriv`: no capabilities, empty bounding set, `no_new_privs`, and an environment the broker builds itself.
+- `beast-agent` has no sudo and cannot open the executor socket.
+- Beast API runs as `beast` with `NoNewPrivileges=yes` and starts no processes itself.
+- In development (`BEAST_RUNNER=local`) children still run under `setpriv --no-new-privs`.
+- Verification that relies on sudo fails with a clear reason.
 
 **Verification -> host:** Beast launches project npm scripts directly as host child processes, outside the agent sandbox, with the same two credentials filtered. These scripts can write files and run commands with the service user's permissions. Only run trusted project scripts; verification is not a read-only or sandboxed safety boundary.
 
@@ -58,4 +63,4 @@ Structured application logs redact fields whose names look secret-like. Request 
 
 ## Production permissions
 
-The current Beast Ready workflow is deliberately narrower than full VPS administration. Controlled admin operations (IDE-69) are a separate, typed, opt-in path with risk classes and exact approvals; they are off by default and can only run in dry-run until a privileged executor is activated. See [ADMIN.md](ADMIN.md). Production deployment, PM2/system changes, Nginx, firewall, DNS, public ports, destructive Git operations, and similar consequential actions require separate explicit approval.
+The current Beast Ready workflow is deliberately narrower than full VPS administration. Controlled admin operations (IDE-69) are a separate, typed, opt-in path with risk classes and exact approvals, executed only by the root broker `beast-executor`, which re-validates every request. See [ADMIN.md](ADMIN.md). Production deployment, PM2/system changes, Nginx, firewall, DNS, public ports, destructive Git operations, and similar consequential actions require separate explicit approval.

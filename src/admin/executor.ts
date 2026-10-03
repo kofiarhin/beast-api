@@ -1,6 +1,7 @@
 import { isAuthorizationGrant, type AuthorizationGrant } from "./authorize.js";
 import { sanitizeResult, statusResult } from "./result.js";
 import type { OperationResult } from "./types.js";
+import { toWireRequest } from "./protocol.js";
 import { isValidatedOperation, type ValidatedOperation } from "./validate.js";
 
 /**
@@ -68,5 +69,27 @@ export class DryRunExecutor extends GuardedExecutor {
       fields: { mode: "dry-run", plannedAction: op.summary, riskClass: op.riskClass, protected: op.protected },
       reason: "dry run: no privileged action was taken",
     };
+  }
+}
+
+/** Minimal view of the broker client, so this module stays free of transport code. */
+export interface BrokerRequester {
+  request<T = unknown>(msg: import("./protocol.js").BrokerRequest): Promise<T>;
+}
+
+/**
+ * Real privileged execution: sends the typed operation and Beast's grant to the root
+ * broker, which re-validates everything independently. A transport failure is a failed
+ * result; it is never retried and never falls back to another executor.
+ */
+export class BrokerExecutor extends GuardedExecutor {
+  readonly kind = "broker";
+  constructor(private readonly broker: BrokerRequester) {
+    super();
+  }
+  protected async perform(op: ValidatedOperation, grant: AuthorizationGrant): Promise<unknown> {
+    const reply = await this.broker.request<{ type: string; result?: unknown }>(toWireRequest(op, grant));
+    if (reply.type !== "result") throw new Error("executor returned an unexpected reply");
+    return reply.result;
   }
 }

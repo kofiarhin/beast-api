@@ -1,8 +1,8 @@
 import path from "node:path";
 import { AuditLog } from "./admin/audit.js";
-import { DryRunExecutor } from "./admin/executor.js";
+import { BrokerExecutor, DryRunExecutor, type PrivilegedExecutor } from "./admin/executor.js";
 import { loadPolicy } from "./admin/policy.js";
-import { SystemHostProbe } from "./admin/probe.js";
+import { BrokerHostProbe, SystemHostProbe, type HostProbe } from "./admin/probe.js";
 import { AdminService } from "./admin/service.js";
 import { createAgentAdapter } from "./agents/index.js";
 import { createApp } from "./app.js";
@@ -13,11 +13,21 @@ import { createLogger } from "./logger.js";
 import { JobStore } from "./queue/store.js";
 import { Worker } from "./queue/worker.js";
 import { loadRegistry } from "./registry/registry.js";
-import { killActiveProcessGroups } from "./util/exec.js";
+import { BrokerClient } from "./executor/client.js";
+import { BrokerCommandRunner } from "./executor/runner.js";
+import { killActiveProcessGroups, setCommandRunner } from "./util/exec.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger({ service: "beast-api" });
+
+  // In production every child process (agent, verification, Git) runs as beast-agent
+  // through beast-executor; Beast API itself starts no processes.
+  const broker = config.runner === "broker" ? new BrokerClient(config.executorSocket) : undefined;
+  if (broker) {
+    if (process.getuid?.() === 0) throw new Error("Beast API must not run as root");
+    setCommandRunner(new BrokerCommandRunner(broker, { [config.claudeBin]: "claude", [config.codexBin]: "codex", npm: "npm", git: "git" }));
+  }
 
   const registry = loadRegistry(config.projectsFile, config.workspaceRoot);
   if (registry.outsideRoot.length) {
@@ -53,22 +63,24 @@ async function main(): Promise<void> {
     verifyScripts: config.verifyScripts,
   });
 
-  // Controlled admin (IDE-69): off by default. Only `dry-run` exists in this phase, so no
-  // executor here can perform a privileged action.
+  // Controlled admin (IDE-69): off by default. `dry-run` executes nothing; `enforce`
+  // (which requires the broker runner) executes through beast-executor.
   let admin: AdminService | undefined;
-  if (config.adminMode === "dry-run") {
+  if (config.adminMode !== "off") {
     const policy = loadPolicy(config.adminPolicyFile);
     if (!policy.ok) logger.error("admin policy invalid; every admin request will be denied", { error: policy.error });
     const audit = new AuditLog(path.join(config.dataDir, "admin-audit.jsonl"));
     if (audit.broken) logger.error("admin audit log failed verification; admin operations cannot run", { error: audit.broken });
     if (!config.linearApiKey) logger.warn("admin mode enabled without LINEAR_API_KEY; every admin request will be denied");
+    const probe: HostProbe = broker ? new BrokerHostProbe(broker) : new SystemHostProbe();
+    const executor: PrivilegedExecutor = config.adminMode === "enforce" && broker ? new BrokerExecutor(broker) : new DryRunExecutor();
     admin = new AdminService({
       label: config.adminLabel,
       readyLabel: config.readyLabel,
-      auth: { requesters: config.adminRequesters, approvers: config.adminApprovers },
+      auth: { requesters: config.adminRequesters, approvers: config.adminApprovers, sharedIdentity: config.adminSharedLinearIdentity },
       policy,
-      probe: new SystemHostProbe(),
-      executor: new DryRunExecutor(),
+      probe,
+      executor,
       audit,
       store,
       linear,
@@ -102,6 +114,7 @@ async function main(): Promise<void> {
       port: config.port,
       agent: adapter.name,
       adminMode: config.adminMode,
+      runner: config.runner,
       projects: registry.list().map((p) => p.name),
     });
     // Resume jobs that were queued before a restart.

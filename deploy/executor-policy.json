@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "enabledOperations": [
+    "service.status",
+    "service.restart",
+    "pm2.status",
+    "pm2.restart",
+    "nginx.test",
+    "nginx.reload",
+    "system.logs",
+    "package.inspect",
+    "filesystem.inspect",
+    "filesystem.chown"
+  ],
+  "additionalProtectedServices": [],
+  "additionalProtectedPaths": []
+}

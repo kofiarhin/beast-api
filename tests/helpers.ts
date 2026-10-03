@@ -64,8 +64,12 @@ export class FakeLinear implements LinearClient {
     this.fetchCalls++;
     return this.issues[id] ?? null;
   }
+  ownCommentIds = new Set<string>();
   async addComment(issueId: string, body: string) {
     this.comments.push({ issueId, body });
+  }
+  isOwnComment(id: string) {
+    return this.ownCommentIds.has(id);
   }
   /** Comments as Linear's API would return them, keyed by comment ID. */
   apiComments: Record<string, LinearComment> = {};

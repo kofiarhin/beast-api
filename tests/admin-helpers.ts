@@ -79,7 +79,7 @@ export interface AdminHarness extends Harness {
   clock: { now: number };
 }
 
-export function makeAdminHarness(opts: { policy?: PolicyLoad; requesters?: string[]; approvers?: string[] } = {}): AdminHarness {
+export function makeAdminHarness(opts: { policy?: PolicyLoad; requesters?: string[]; approvers?: string[]; sharedIdentity?: boolean } = {}): AdminHarness {
   const h = makeHarness({ autoKick: false });
   const probe = new FakeProbe();
   const executor = new FakeExecutor();
@@ -89,7 +89,7 @@ export function makeAdminHarness(opts: { policy?: PolicyLoad; requesters?: strin
   const admin = new AdminService({
     label: ADMIN,
     readyLabel: READY,
-    auth: { requesters: opts.requesters ?? [REQUESTER], approvers: opts.approvers ?? [APPROVER] },
+    auth: { requesters: opts.requesters ?? [REQUESTER], approvers: opts.approvers ?? [APPROVER], sharedIdentity: opts.sharedIdentity },
     policy: opts.policy ?? policyWith(),
     probe,
     executor,

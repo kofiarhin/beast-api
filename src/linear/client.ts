@@ -16,6 +16,8 @@ export interface LinearClient {
    * Null when it cannot be determined unambiguously.
    */
   fetchLabelAdder(issueId: string, labelId: string): Promise<string | null>;
+  /** True for comments this process posted itself; they never count as approvals. */
+  isOwnComment(commentId: string): boolean;
 }
 
 const ISSUE_QUERY = `
@@ -34,7 +36,7 @@ const ISSUE_QUERY = `
 
 const COMMENT_MUTATION = `
   mutation BeastComment($input: CommentCreateInput!) {
-    commentCreate(input: $input) { success }
+    commentCreate(input: $input) { success comment { id } }
   }
 `;
 
@@ -138,8 +140,20 @@ export class LinearGraphQLClient implements LinearClient {
     };
   }
 
+  /** IDs of comments Beast posted (bounded). Needed when Beast's API key belongs to a human approver. */
+  private readonly ownComments = new Set<string>();
+
   async addComment(issueId: string, body: string): Promise<void> {
-    await this.request(COMMENT_MUTATION, { input: { issueId, body } });
+    const data = await this.request<{ commentCreate: { comment: { id: string } | null } | null }>(COMMENT_MUTATION, { input: { issueId, body } });
+    const id = data.commentCreate?.comment?.id;
+    if (id) {
+      this.ownComments.add(id);
+      if (this.ownComments.size > 10_000) this.ownComments.delete(this.ownComments.values().next().value!);
+    }
+  }
+
+  isOwnComment(commentId: string): boolean {
+    return this.ownComments.has(commentId);
   }
 
   async fetchComment(commentId: string): Promise<LinearComment | null> {
@@ -198,5 +212,9 @@ export class UnconfiguredLinearClient implements LinearClient {
 
   async fetchLabelAdder(): Promise<string | null> {
     return null;
+  }
+
+  isOwnComment(): boolean {
+    return false;
   }
 }

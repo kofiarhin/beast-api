@@ -374,7 +374,10 @@ never logged.
 | `BEAST_CLAUDE_BIN`           | `claude`                        | Claude Code binary                            |
 | `BEAST_CLAUDE_MODEL`         | _(Claude Code default)_         | Optional model override                       |
 | `LINEAR_API_URL`             | `https://api.linear.app/graphql`|                                               |
-| `BEAST_ADMIN_MODE`           | `off`                           | `off` or `dry-run`; `enforce` fails startup   |
+| `BEAST_ADMIN_MODE`           | `off`                           | `off`, `dry-run` or `enforce` (needs broker)  |
+| `BEAST_RUNNER`               | `local`                         | `broker`: jobs run as beast-agent via executor|
+| `BEAST_EXECUTOR_SOCKET`      | `/run/beast-executor/executor.sock` | Privileged executor socket                |
+| `BEAST_ADMIN_SHARED_LINEAR_IDENTITY` | `false`                 | Linear API key belongs to an approver         |
 | `BEAST_ADMIN_LABEL`          | `Beast Admin`                   | Admin request label                           |
 | `BEAST_ADMIN_REQUESTERS`     | _(empty)_                       | Linear user IDs allowed to request            |
 | `BEAST_ADMIN_APPROVERS`      | _(empty)_                       | Linear user IDs allowed to approve class C    |
@@ -442,4 +445,4 @@ content; persistence and restart recovery; log redaction.
 - Every child process runs under `setpriv --no-new-privs`: agents and verification scripts cannot
   gain root through `sudo`, `su` or `pkexec`.
 - Admin operations are typed, opt-in per operation, validated before escalation and approved per
-  exact scope for class C. They are off by default and dry-run only in this phase ([ADMIN.md](docs/ADMIN.md)).
+  exact scope for class C. Only the root broker `beast-executor` executes them ([ADMIN.md](docs/ADMIN.md)).

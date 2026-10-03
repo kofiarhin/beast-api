@@ -2,15 +2,26 @@
 
 ## Status
 
-**Application layer only. No real root privileges are active.** `BEAST_ADMIN_MODE` is `off` by default. The only other mode is `dry-run`, which runs the whole request, authorization and approval flow but executes nothing on the host. `enforce` does not exist yet, and asking for it fails startup. Nothing in `/etc`, sudoers, systemd, Nginx, the firewall, PM2 or cron was changed for this work.
+**Activated on Beast (enforce mode).** `BEAST_ADMIN_MODE` is `off` by default; `dry-run` runs the whole flow but executes nothing; `enforce` executes through the root broker `beast-executor` and is only accepted together with `BEAST_RUNNER=broker`.
 
 ## Model
 
-- **Beast API is the security boundary.** It validates and authorizes every request before anything privileged could happen.
-- **A separate privileged executor** (future `beast-executor` broker) will perform only typed operations. It accepts a validated operation plus Beast's grant, never a command string.
-- **Claude and Codex stay non-root.** Ordinary coding jobs never reach the admin path, and every child process Beast starts runs under `setpriv --no-new-privs`, so `sudo`, `su` and `pkexec` cannot raise privileges.
+- **Three accounts.**
+  - `beast` runs Beast API. It has no sudo, and its systemd unit sets `NoNewPrivileges=yes`, an empty capability set and a read-only filesystem except its state, the workspace root and the executor socket directory.
+  - `beast-agent` runs every coding agent, verification script and Git command. It cannot reach the executor socket.
+  - `root` runs only `beast-executor`.
+- **Beast API is the policy boundary.** It validates and authorizes every request, including class C approvals from Linear.
+- **`beast-executor` is the only privileged path.**
+  - It listens on `/run/beast-executor/executor.sock` (mode `0660`, `root:beast`, set by systemd socket activation).
+  - It accepts typed operations, never a command string.
+  - It re-validates every request independently: its own root-owned policy (`/etc/beast-executor/policy.json`), its own target probe, the facts Beast validated (for example the inode of a chown target), the risk class, and single use of each class C approval digest.
+  - It runs a fixed program with a fixed argument vector, or a direct syscall (`lchown`).
+- **Jobs never run as Beast or root.**
+  - The broker starts `claude`, `codex`, `npm run test|lint|typecheck|build` and `git` as `beast-agent`, through `setpriv` (no capabilities, empty bounding set, `no_new_privs`).
+  - It uses an environment it builds itself; only `CI`, `FORCE_COLOR`, `GIT_TERMINAL_PROMPT` and `GIT_OPTIONAL_LOCKS` can be set by Beast API.
+  - Beast API therefore never executes workspace content (for example Git hooks or `core.fsmonitor`) as `beast`.
 
-Forbidden by design: `sudo <arbitrary command>`, `su`, `bash -c`/`sh -c` with arbitrary input, `execRoot(command)`, `runAsRoot(commandString)`, and any interactive or arbitrary root shell. `src/admin` has no command-string type and does not import `child_process`. Only the read-only probe runs host commands, unprivileged and through fixed argv.
+Forbidden by design: `sudo <arbitrary command>`, `su`, `bash -c`/`sh -c` with arbitrary input, `execRoot(command)`, `runAsRoot(commandString)`, and any interactive or arbitrary root shell. `src/admin` has no command-string type and does not import `child_process`. In `src/executor`, only `proc.ts` starts processes, never with a shell.
 
 ## Requesting an operation
 
@@ -105,12 +116,13 @@ Protected targets fail closed unless the exact operation is approved. The plan c
    - it is a **new comment** whose entire body is exactly `/beast approve <digest>`;
    - it is on the **same issue**;
    - it is not edited;
-   - its author is in `BEAST_ADMIN_APPROVERS` and is not Beast's own Linear user;
+   - it was not posted by Beast itself (Beast records the ID of every comment it posts);
+   - its author is in `BEAST_ADMIN_APPROVERS` and is not Beast's own Linear user. Exception: with `BEAST_ADMIN_SHARED_LINEAR_IDENTITY=true` (Beast's API key belongs to the human approver), that user may approve; Beast-posted comments are still rejected by ID;
    - it arrives before expiry.
 
    The requester may also approve. `/beast deny <digest>` cancels the plan.
 3. **Recheck before execution.** Beast re-reads the issue: the label must still be present and the description unchanged. It re-validates the request and recomputes the digest. Any drift voids the approval.
-4. **Single use.** The approval nonce is consumed before execution starts, so an approval can never run twice. Unapproved plans expire after 15 minutes.
+4. **Single use.** The approval nonce is consumed before execution starts, and the broker separately records each digest it has executed, so an approval can never run twice. Unapproved plans expire after 15 minutes.
 
 ## Results, audit, failures
 
@@ -127,34 +139,39 @@ Protected targets fail closed unless the exact operation is approved. The plan c
 
 | Variable | Default | Notes |
 |---|---|---|
-| `BEAST_ADMIN_MODE` | `off` | `off` or `dry-run`; `enforce` fails startup in this phase |
+| `BEAST_ADMIN_MODE` | `off` | `off`, `dry-run` or `enforce`; `enforce` requires `BEAST_RUNNER=broker` |
+| `BEAST_RUNNER` | `local` | `broker` runs every child process as `beast-agent` through beast-executor |
+| `BEAST_EXECUTOR_SOCKET` | `/run/beast-executor/executor.sock` | |
 | `BEAST_ADMIN_LABEL` | `Beast Admin` | Always mutually exclusive with `BEAST_READY_LABEL` |
 | `BEAST_ADMIN_REQUESTERS` | _(empty)_ | Comma-separated Linear user IDs |
 | `BEAST_ADMIN_APPROVERS` | _(empty)_ | Comma-separated Linear user IDs |
-| `BEAST_ADMIN_POLICY_FILE` | `./config/admin-policy.json` | Enabled operations and extra protected targets |
+| `BEAST_ADMIN_SHARED_LINEAR_IDENTITY` | `false` | `true` when Beast's Linear API key belongs to an approver |
+| `BEAST_ADMIN_POLICY_FILE` | `./config/admin-policy.json` | Production: `/etc/beast-api/admin-policy.json` |
 
-Admin mode also needs `LINEAR_API_KEY` (to verify requesters and approvers), and the Linear webhook must send **Comment** events. Both are live configuration changes that need separate approval.
+Admin mode also needs `LINEAR_API_KEY` (to verify requesters and approvers), and the Linear webhook must send **Comment** events.
 
 ## Ordinary jobs cannot escalate
 
-`runCommand` starts every child as `setpriv --no-new-privs -- <cmd>`, with no opt-out. If `/usr/bin/setpriv` is missing, nothing runs. A verification script that tries `sudo`, `su` or `pkexec` fails with: *verification script attempted privilege escalation (sudo/su/pkexec); blocked by no-new-privs*.
+- With `BEAST_RUNNER=broker`, jobs run as `beast-agent` under `no_new_privs` with no capabilities. `beast-agent` has no sudo, and it is not in the `beast` group, so it cannot open the executor socket.
+- With `BEAST_RUNNER=local` (development), `runCommand` starts every child as `setpriv --no-new-privs -- <cmd>`, with no opt-out. If `/usr/bin/setpriv` is missing, nothing runs.
+- A verification script that tries `sudo`, `su` or `pkexec` fails with: *verification script attempted privilege escalation (sudo/su/pkexec); blocked by no-new-privs*.
 
-**Remaining gap until activation:** jobs still run as `ubuntu`. They can't escalate directly, but they could write files such as `~/.bashrc` or `PATH` shims that a later privileged human session would run. The separate `beast-agent` user planned for activation closes this gap.
+## Production layout (activation)
 
-## Future activation (not done; needs explicit approval)
+| Item | Location |
+|---|---|
+| Beast API unit | `/etc/systemd/system/beast-api.service` (from `deploy/systemd/`), user `beast` |
+| Beast API env file | `/etc/beast-api/production.env` (`root:beast 0640`) |
+| Beast API admin policy | `/etc/beast-api/admin-policy.json` (root-owned) |
+| Beast API state, job logs, admin audit | `/var/lib/beast-api` |
+| Executor units | `/etc/systemd/system/beast-executor.{socket,service}` |
+| Executor code | `/opt/beast-executor` (root-owned copy of `dist/`) |
+| Executor policy | `/etc/beast-executor/policy.json` (from `deploy/executor-policy.json`) |
+| Executor state (used approval digests, capture files) | `/var/lib/beast-executor` |
+| Agent account | `beast-agent`. Its own Claude/Codex logins live in its home. It has ACL access to `/home/ubuntu/projects` (default ACLs keep `ubuntu` access to files it creates). |
 
-**Recommended mechanism:** a root-owned `beast-executor` broker, started by systemd socket activation on a Unix socket.
-- It accepts connections only from the `beast` service user, checked by peer UID.
-- It re-validates every request against its own root-owned policy and performs operations with fixed `execFile` argv. Chown uses `fchown`/`lchown`, never follows symlinks and stays on one filesystem.
-- It provides an internal `agent.spawn` that starts agents and verification scripts as `beast-agent` with `no_new_privs` (see `src/admin/protocol.ts`).
-- No sudoers rules are involved; the executor is the only privileged path.
+Updating the executor means rebuilding, copying `dist/` to `/opt/beast-executor` as root, then restarting `beast-executor`. That restart stops any running job, so do it only when the queue is idle.
 
-**System changes activation would need:**
-- `beast` and `beast-agent` system users;
-- `beast-executor.socket` and `beast-executor.service`;
-- `/etc/beast-executor/policy.json`;
-- a root-owned build of the executor;
-- `beast-api.service` with `User=beast`;
-- moving `beast-api` off `ubuntu`'s PM2;
-- workspace ACLs;
-- logging the agent CLIs in again as `beast-agent`.
+**Known limits.**
+- Recursive chown re-checks each directory around `readdir` but cannot use `openat`, so a racing writer inside the tree is reduced, not eliminated. Class C approval and the protected-path list bound the exposure.
+- `beast-agent` can traverse `/home/ubuntu`, so world-readable files there remain readable to jobs, as they were when jobs ran as `ubuntu`.

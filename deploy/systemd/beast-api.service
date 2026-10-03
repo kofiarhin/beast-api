@@ -1,0 +1,44 @@
+# Beast API (IDE-69 activation): runs as the unprivileged `beast` user and starts no processes
+# itself; jobs run as beast-agent through beast-executor. It can never gain privileges.
+[Unit]
+Description=Beast API
+Wants=network-online.target beast-executor.socket
+After=network-online.target beast-executor.socket
+
+[Service]
+Type=simple
+User=beast
+Group=beast
+WorkingDirectory=/home/ubuntu/apps/beast-api
+ExecStart=/usr/bin/node --env-file=/etc/beast-api/production.env dist/server.js
+Environment=NODE_ENV=production
+Environment=HOME=/var/lib/beast-api
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+StateDirectory=beast-api
+StateDirectoryMode=0700
+Restart=always
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=20
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/beast-api /home/ubuntu/projects /run/beast-executor
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

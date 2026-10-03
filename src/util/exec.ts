@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { CAPTURE_FILE_TOKEN } from "../admin/protocol.js";
 import { SECRET_ENV_VARS } from "../config.js";
 
 /**
@@ -22,6 +24,8 @@ export interface ExecResult {
   durationMs: number;
   /** Set when the process could not be started (e.g. binary not found). */
   spawnError?: string;
+  /** Contents of the capture file, when `captureFile` was requested. */
+  captured?: string;
 }
 
 export interface ExecOptions {
@@ -36,7 +40,31 @@ export interface ExecOptions {
   signal?: AbortSignal;
   /** Delay between SIGTERM and SIGKILL when stopping the process group. */
   killGraceMs?: number;
+  /**
+   * Replace the single CAPTURE_FILE_TOKEN argument with a private temporary file and
+   * return that file's contents in `captured` (used for Codex's last message).
+   */
+  captureFile?: boolean;
 }
+
+/**
+ * Where child processes run. By default they run locally as this process's user. In
+ * production Beast API installs the broker runner, so every agent, verification script
+ * and Git command runs as `beast-agent` through beast-executor instead.
+ */
+export interface CommandRunner {
+  run(cmd: string, args: string[], opts: ExecOptions): Promise<ExecResult>;
+  /** Stop everything this runner started; returns how many were running. */
+  killAll(): number;
+}
+
+let installedRunner: CommandRunner | undefined;
+
+export function setCommandRunner(runner: CommandRunner | undefined): void {
+  installedRunner = runner;
+}
+
+export const MAX_CAPTURE_CHARS = 256 * 1024;
 
 /** Process groups of children that are still running. */
 const activeGroups = new Set<number>();
@@ -55,7 +83,7 @@ function killGroupNow(pid: number, signal: NodeJS.Signals): void {
  */
 export function killActiveProcessGroups(signal: NodeJS.Signals = "SIGKILL"): number {
   for (const pid of activeGroups) killGroupNow(pid, signal);
-  return activeGroups.size;
+  return activeGroups.size + (installedRunner?.killAll() ?? 0);
 }
 
 /**
@@ -104,6 +132,28 @@ function tail(text: string, max: number): string {
  * in the result. If setpriv is unavailable the command is not run at all (fail closed).
  */
 export function runCommand(cmd: string, args: string[], opts: ExecOptions): Promise<ExecResult> {
+  if (installedRunner) return installedRunner.run(cmd, args, opts);
+  if (!opts.captureFile) return runLocal(cmd, args, opts);
+  let dir: string;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "beast-capture-"));
+  } catch (err) {
+    return Promise.resolve({ exitCode: null, signal: null, stdout: "", stderr: "", timedOut: false, aborted: false, durationMs: 0, spawnError: `could not create capture file: ${String(err)}` });
+  }
+  const file = path.join(dir, "out");
+  return runLocal(cmd, args.map((a) => (a === CAPTURE_FILE_TOKEN ? file : a)), opts).then((res) => {
+    let captured: string | undefined;
+    try {
+      captured = fs.readFileSync(file, "utf8").slice(0, MAX_CAPTURE_CHARS);
+    } catch {
+      captured = undefined;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { ...res, captured };
+  });
+}
+
+function runLocal(cmd: string, args: string[], opts: ExecOptions): Promise<ExecResult> {
   const max = opts.maxOutputChars ?? 20_000;
   const started = Date.now();
   const env = opts.env ?? childEnv();
