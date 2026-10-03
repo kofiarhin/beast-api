@@ -64,6 +64,8 @@ beforeEach(async () => {
   writePolicy(operationIds());
   const cfg: BrokerConfig = {
     policyFile: path.join(dir, "policy.json"),
+    deploymentsFile: path.join(dir, "deployments.json"),
+    deployRoots: [path.join(dir, "apps")],
     stateDir: path.join(dir, "state"),
     workspaceRoot: fs.realpathSync(ws),
     agentUser: "beast-agent",
@@ -74,7 +76,7 @@ beforeEach(async () => {
       npm: script("fake-npm", `console.log("npm", process.argv.slice(2).join(" "))`),
       git: "/usr/bin/git",
     },
-    bins: { setpriv: "/usr/bin/setpriv", systemctl: "/bin/false", journalctl: "/bin/false", nginx: "/bin/false", dpkgQuery: "/bin/false", getent: "/usr/bin/getent", pm2: "/bin/false", tail: "/usr/bin/tail" },
+    bins: { setpriv: "/usr/bin/setpriv", systemctl: "/bin/false", journalctl: "/bin/false", nginx: "/bin/false", dpkgQuery: "/bin/false", getent: "/usr/bin/getent", pm2: "/bin/false", tail: "/usr/bin/tail", rm: "/usr/bin/rm" },
     nginxLogs: { access: "/nonexistent", error: "/nonexistent" },
     beastPaths: ["/home/ubuntu/apps/beast-api"],
   };

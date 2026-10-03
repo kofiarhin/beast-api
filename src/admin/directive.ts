@@ -10,6 +10,18 @@ const OP_LINE = /^Beast admin operation:/i;
 const PARAMS_LINE = /^Beast admin params:/i;
 const MAX_PARAMS_JSON = 2048;
 
+/**
+ * Linear stores a bare operation id whose suffix is a top-level domain (for example
+ * `deploy.run`) as a markdown autolink: `[deploy.run](<http://deploy.run>)`. Only that exact
+ * self-link is unwrapped; any other markdown stays as it is and fails validation.
+ */
+const AUTOLINK = /^\[([^\]\s]+)\]\(<?https?:\/\/([^\s()<>]+?)\/?>?\)$/;
+
+function unwrapAutolink(text: string): string {
+  const m = AUTOLINK.exec(text);
+  return m && m[1] === m[2] ? m[1]! : text;
+}
+
 export type DirectiveParse =
   | { ok: true; request: { op: string; params: Record<string, unknown> } }
   | { ok: false; reason: string };
@@ -21,7 +33,7 @@ export function parseAdminDirective(description: string): DirectiveParse {
   if (ops.length !== 1) return { ok: false, reason: "Provide exactly one `Beast admin operation:` line" };
   if (params.length > 1) return { ok: false, reason: "Provide at most one `Beast admin params:` line" };
 
-  const op = ops[0]!.replace(OP_LINE, "").trim();
+  const op = unwrapAutolink(ops[0]!.replace(OP_LINE, "").trim());
   if (!op) return { ok: false, reason: "The `Beast admin operation:` line is empty" };
 
   let parsed: unknown = {};

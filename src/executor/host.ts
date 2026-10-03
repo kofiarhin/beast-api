@@ -1,4 +1,5 @@
 import { lstatPath, type HostProbe, type LstatResult, type Pm2App, type UnitInfo } from "../admin/probe.js";
+import { probeDeployment } from "./deploy.js";
 import { SAFE_PATH, type BrokerConfig } from "./config.js";
 import { runProc } from "./proc.js";
 
@@ -18,6 +19,7 @@ export interface Account {
 export interface Pm2Process {
   name: string;
   execPath: string;
+  cwd: string;
   status: string;
   pid: number;
   restarts: number;
@@ -126,6 +128,7 @@ export class BrokerHost {
           return {
             name: p.name as string,
             execPath: str(e.pm_exec_path),
+            cwd: str(e.pm_cwd),
             status: str(e.status),
             pid: typeof p.pid === "number" ? p.pid : 0,
             restarts: typeof e.restart_time === "number" ? e.restart_time : 0,
@@ -147,6 +150,7 @@ export class BrokerHost {
       userId: (name) => this.userId(name),
       groupId: (name) => this.groupId(name),
       lstat: (p): Promise<LstatResult> => lstatPath(p),
+      deployment: (q) => probeDeployment(this, q),
     };
   }
 }

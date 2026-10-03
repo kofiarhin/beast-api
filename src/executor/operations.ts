@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { lstatPath } from "../admin/probe.js";
 import type { ValidatedOperation } from "../admin/validate.js";
+import { deploymentStatus, rollbackDeployment, runDeployment } from "./deploy.js";
 import type { BrokerHost } from "./host.js";
 
 /**
@@ -183,6 +184,12 @@ export async function performOperation(op: ValidatedOperation, host: BrokerHost)
     }
     case "filesystem.chown":
       return chown(op, host);
+    case "deploy.status":
+      return deploymentStatus(op, host);
+    case "deploy.run":
+      return runDeployment(op, host);
+    case "deploy.rollback":
+      return rollbackDeployment(op, host);
     default:
       return { status: "denied", reason: `operation ${op.op} has no executor implementation` };
   }

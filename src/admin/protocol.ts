@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { AuthorizationGrant } from "./authorize.js";
-import { ACCOUNT_NAME, UNIT_NAME } from "./names.js";
+import { ACCOUNT_NAME, COMMIT_SHA, DEPLOY_TARGET_NAME, UNIT_NAME } from "./names.js";
 import { checkPathSyntax } from "./paths.js";
 import type { ValidatedOperation } from "./validate.js";
 
@@ -54,7 +54,11 @@ export type ProbeRequest =
   | { v: 1; type: "probe"; what: "unit"; name: string }
   | { v: 1; type: "probe"; what: "pm2Apps" }
   | { v: 1; type: "probe"; what: "userId" | "groupId"; name: string }
-  | { v: 1; type: "probe"; what: "lstat"; path: string };
+  | { v: 1; type: "probe"; what: "lstat"; path: string }
+  | { v: 1; type: "probe"; what: "deployment"; op: string; target: string; commit?: string };
+
+/** Admin operations that take a deployment target. */
+export const DEPLOY_OPS = ["deploy.status", "deploy.run", "deploy.rollback"] as const;
 
 /** Programs the broker may start as `beast-agent`. Their absolute paths are fixed broker-side. */
 export const SPAWN_PROGRAMS = ["claude", "codex", "npm", "git"] as const;
@@ -164,6 +168,12 @@ export function probeRequestProblem(req: Record<string, unknown>): string | unde
       if (!onlyKeys(req, ["v", "type", "what", "path"])) return "unknown fields";
       // Probes walk paths one component at a time, so only plain absolute paths are accepted.
       return typeof req.path === "string" && (req.path === "/" || !checkPathSyntax(req.path)) ? undefined : "invalid path";
+    case "deployment":
+      if (!onlyKeys(req, ["v", "type", "what", "op", "target", "commit"])) return "unknown fields";
+      if (!(DEPLOY_OPS as readonly unknown[]).includes(req.op)) return "invalid deployment op";
+      if (typeof req.target !== "string" || !DEPLOY_TARGET_NAME.test(req.target)) return "invalid deployment target";
+      if (req.op === "deploy.run" ? typeof req.commit !== "string" || !COMMIT_SHA.test(req.commit) : req.commit !== undefined) return "invalid commit";
+      return undefined;
     default:
       return "unknown probe";
   }

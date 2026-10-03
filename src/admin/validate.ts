@@ -1,4 +1,4 @@
-import { ACCOUNT_NAME, PACKAGE_NAME, PM2_APP_NAME, UNIT_NAME } from "./names.js";
+import { ACCOUNT_NAME, COMMIT_SHA, DEPLOY_TARGET_NAME, PACKAGE_NAME, PM2_APP_NAME, UNIT_NAME } from "./names.js";
 import { checkPathSyntax } from "./paths.js";
 import type { PolicyLoad } from "./policy.js";
 import type { HostProbe } from "./probe.js";
@@ -78,6 +78,10 @@ function checkSyntax(name: string, spec: ParamSpec, value: unknown): string | un
       return formatted(ACCOUNT_NAME, "group name");
     case "package":
       return formatted(PACKAGE_NAME, "package name");
+    case "deployTarget":
+      return formatted(DEPLOY_TARGET_NAME, "deployment target id");
+    case "commit":
+      return formatted(COMMIT_SHA, "full 40-character lowercase Git commit id");
     case "path": {
       const err = checkPathSyntax(value);
       return err && `${name}: ${err}`;
@@ -124,8 +128,15 @@ async function resolvePath(name: string, p: string, probe: HostProbe, leafTypes?
   };
 }
 
-async function resolveLive(op: string, name: string, spec: ParamSpec, value: ParamValue, probe: HostProbe): Promise<Resolution> {
+async function resolveLive(op: string, name: string, spec: ParamSpec, value: ParamValue, params: OperationParams, probe: HostProbe): Promise<Resolution> {
   switch (spec.type) {
+    case "deployTarget": {
+      // The executor resolves the target against its own root-owned definitions and checks
+      // the live checkout, PM2 app and (for deploy.run) the requested commit.
+      const res = await probe.deployment({ op, target: String(value), ...(params.commit !== undefined ? { commit: String(params.commit) } : {}) });
+      if (!res) return { code: "uncertain", reason: `${name}: could not inspect deployment target ${value}` };
+      return res.ok ? { facts: res.facts } : { code: res.code, reason: `${name}: ${res.reason}` };
+    }
     case "unit": {
       const info = await probe.unit(String(value));
       if (!info) return { code: "uncertain", reason: `${name}: could not query systemd for ${value}` };
@@ -198,7 +209,7 @@ export async function validateOperation(raw: RawOperationRequest, ctx: Validatio
     const facts: Record<string, string> = {};
     for (const [name, spec] of Object.entries(def.params)) {
       if (params[name] === undefined) continue;
-      const res = await resolveLive(def.id, name, spec, params[name]!, ctx.probe);
+      const res = await resolveLive(def.id, name, spec, params[name]!, params, ctx.probe);
       if ("code" in res) return deny(res.code, res.reason);
       Object.assign(facts, res.facts);
     }

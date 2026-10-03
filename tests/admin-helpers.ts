@@ -3,7 +3,7 @@ import { AuditLog } from "../src/admin/audit.js";
 import type { AuthorizationGrant } from "../src/admin/authorize.js";
 import { GuardedExecutor } from "../src/admin/executor.js";
 import { parsePolicy, type PolicyLoad } from "../src/admin/policy.js";
-import { lstatPath, type HostProbe, type LstatResult, type Pm2App, type UnitInfo } from "../src/admin/probe.js";
+import { lstatPath, type DeploymentProbe, type DeploymentQuery, type HostProbe, type LstatResult, type Pm2App, type UnitInfo } from "../src/admin/probe.js";
 import { operationIds } from "../src/admin/registry.js";
 import { AdminService } from "../src/admin/service.js";
 import type { ValidatedOperation } from "../src/admin/validate.js";
@@ -35,6 +35,11 @@ export class FakeProbe implements HostProbe {
   users: Record<string, number> = { ubuntu: 1000, "www-data": 33, root: 0 };
   groups: Record<string, number> = { ubuntu: 1000, "www-data": 33, root: 0 };
   pathOverrides: Record<string, LstatResult> = {};
+  /** Deployment targets known to the fake executor, and what it currently reports for them. */
+  deployments: Record<string, { currentCommit: string; definitionHash: string } | null> = {
+    "test-app": { currentCommit: "a".repeat(40), definitionHash: "d".repeat(64) },
+  };
+  deploymentQueries: DeploymentQuery[] = [];
   calls = 0;
 
   async unit(name: string) {
@@ -53,6 +58,16 @@ export class FakeProbe implements HostProbe {
   }
   async lstat(p: string) {
     return this.pathOverrides[p] ?? lstatPath(p);
+  }
+  async deployment(q: DeploymentQuery): Promise<DeploymentProbe | null> {
+    this.deploymentQueries.push(q);
+    if (!(q.target in this.deployments)) return { ok: false, code: "unsupported_target", reason: `unknown deployment target ${q.target}` };
+    const d = this.deployments[q.target];
+    if (!d) return null;
+    const facts: Record<string, string> = { "deployment.definitionHash": d.definitionHash, "target.currentCommit": d.currentCommit };
+    if (q.op === "deploy.run") facts["deploy.commit"] = q.commit!;
+    if (q.op === "deploy.rollback") facts["rollback.toCommit"] = "b".repeat(40);
+    return { ok: true, facts };
   }
 }
 

@@ -27,12 +27,29 @@ export interface PathInfo {
 
 export type LstatResult = PathInfo | "missing" | "denied";
 
+/** What a deployment-target probe is asked about (IDE-82). `commit` only for deploy.run. */
+export interface DeploymentQuery {
+  op: string;
+  target: string;
+  commit?: string;
+}
+
+/**
+ * The executor's answer. `facts` describe the target's definition and live state; they are
+ * shown in the approval plan, bound into its digest and re-checked before execution.
+ */
+export type DeploymentProbe =
+  | { ok: true; facts: Record<string, string> }
+  | { ok: false; code: "unsupported_target" | "uncertain"; reason: string };
+
 export interface HostProbe {
   unit(name: string): Promise<UnitInfo | null>;
   pm2Apps(): Promise<Pm2App[] | null>;
   userId(name: string): Promise<number | null>;
   groupId(name: string): Promise<number | null>;
   lstat(p: string): Promise<LstatResult>;
+  /** Null means the target could not be inspected (deny). */
+  deployment(q: DeploymentQuery): Promise<DeploymentProbe | null>;
 }
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -111,6 +128,11 @@ export class SystemHostProbe implements HostProbe {
   lstat(p: string): Promise<LstatResult> {
     return lstatPath(p);
   }
+
+  async deployment(): Promise<DeploymentProbe> {
+    // Deployment definitions and checkouts are only visible to the privileged executor.
+    return { ok: false, code: "uncertain", reason: "deployment targets can only be inspected through beast-executor" };
+  }
 }
 
 /**
@@ -145,5 +167,8 @@ export class BrokerHostProbe implements HostProbe {
   lstat(p: string): Promise<LstatResult> {
     // "denied" makes the validator report the path as unverifiable (fail closed).
     return this.ask<LstatResult>({ v: 1, type: "probe", what: "lstat", path: p }, "denied");
+  }
+  deployment(q: DeploymentQuery): Promise<DeploymentProbe | null> {
+    return this.ask<DeploymentProbe | null>({ v: 1, type: "probe", what: "deployment", ...q }, null);
   }
 }

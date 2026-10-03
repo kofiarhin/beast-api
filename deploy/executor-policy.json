@@ -10,7 +10,10 @@
     "system.logs",
     "package.inspect",
     "filesystem.inspect",
-    "filesystem.chown"
+    "filesystem.chown",
+    "deploy.status",
+    "deploy.run",
+    "deploy.rollback"
   ],
   "additionalProtectedServices": [],
   "additionalProtectedPaths": []

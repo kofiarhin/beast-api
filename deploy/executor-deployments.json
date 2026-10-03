@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "deployments": [
+    {
+      "id": "beast-deploy-test",
+      "project": "Beast Deploy Test",
+      "production": false,
+      "mechanism": "pm2-git",
+      "source": { "workspace": "/home/ubuntu/projects/beast-deploy-test", "branch": "main" },
+      "target": { "checkout": "/home/ubuntu/apps/beast-deploy-test", "pm2App": "beast-deploy-test" },
+      "install": "npm-ci",
+      "preDeploy": ["test"],
+      "build": ["build"],
+      "health": { "url": "http://127.0.0.1:3199/health", "expectStatus": 200, "attempts": 10, "intervalMs": 1000 },
+      "rollback": "previous-commit"
+    }
+  ]
+}

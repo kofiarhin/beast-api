@@ -24,6 +24,9 @@ const validate = (op: unknown, params?: unknown, c: ValidationContext = ctx) => 
 describe("operation registry", () => {
   it("contains exactly the approved v1 operations (snapshot: any change shows up in review)", () => {
     expect(operationIds().sort()).toEqual([
+      "deploy.rollback",
+      "deploy.run",
+      "deploy.status",
       "filesystem.chown",
       "filesystem.inspect",
       "nginx.reload",
@@ -38,7 +41,7 @@ describe("operation registry", () => {
   });
 
   it("has no free-form string or argument-list parameter types", () => {
-    const allowed = new Set(["unit", "pm2App", "path", "user", "group", "package", "int", "bool", "enum"]);
+    const allowed = new Set(["unit", "pm2App", "path", "user", "group", "package", "deployTarget", "commit", "int", "bool", "enum"]);
     for (const id of operationIds()) {
       for (const spec of Object.values(getOperation(id)!.params) as ParamSpec[]) expect(allowed.has(spec.type)).toBe(true);
     }
@@ -275,6 +278,11 @@ describe("directive parsing", () => {
   it("requires exactly one operation line and at most one single-line JSON params line", () => {
     expect(parseAdminDirective("Beast admin operation: nginx.test")).toEqual({ ok: true, request: { op: "nginx.test", params: {} } });
     expect(parseAdminDirective("no directive").ok).toBe(false);
+    // Linear autolinks ids ending in a TLD; only the exact self-link is unwrapped.
+    expect(parseAdminDirective("Beast admin operation: [deploy.run](<http://deploy.run>)")).toEqual({ ok: true, request: { op: "deploy.run", params: {} } });
+    expect(parseAdminDirective("Beast admin operation: [deploy.run](http://deploy.run)")).toEqual({ ok: true, request: { op: "deploy.run", params: {} } });
+    expect(parseAdminDirective("Beast admin operation: [deploy.run](<http://evil.run>)")).toMatchObject({ ok: true, request: { op: "[deploy.run](<http://evil.run>)" } });
+    expect(parseAdminDirective("Beast admin operation: [deploy.run](<http://deploy.run/x>)")).toMatchObject({ ok: true, request: { op: "[deploy.run](<http://deploy.run/x>)" } });
     expect(parseAdminDirective("Beast admin operation: a\nBeast admin operation: b").ok).toBe(false);
     expect(parseAdminDirective("Beast admin operation: a\nBeast admin params: {}\nBeast admin params: {}").ok).toBe(false);
     expect(parseAdminDirective("Beast admin operation: a\nBeast admin params: [1]").ok).toBe(false);

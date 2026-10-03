@@ -128,6 +128,8 @@ export class Broker {
         return p.groupId(req.name);
       case "lstat":
         return p.lstat(req.path);
+      case "deployment":
+        return p.deployment({ op: req.op, target: req.target, ...(req.commit !== undefined ? { commit: req.commit } : {}) });
     }
   }
 
