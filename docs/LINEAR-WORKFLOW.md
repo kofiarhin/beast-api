@@ -5,53 +5,67 @@ Linear is the operational source of truth for Beast work. GitHub is the source o
 ## Normal ticket flow
 
 1. Create or use the correct Linear issue.
-2. Put the issue in the Linear project that maps to the intended registered workspace.
-3. Make the issue executable: clear title, description, scope, and acceptance criteria where useful.
-4. Add `Beast Ready` only when local coding-agent execution is authorized.
-5. Linear sends the issue event to Beast API.
-6. Beast validates the webhook and authorizes either issue creation with the ready label or an update that newly adds it.
-7. Beast resolves the Linear project through `config/projects.json`.
+2. Make the issue executable: clear title, description, scope, safety limits, verification and Next Action.
+3. Resolve the workspace using the canonical precedence: explicit `Beast workspace:` directive, registered repository/workspace mapping, then Linear project default. Unknown or ambiguous targets are blocked.
+4. Verify the resolved workspace is the expected registered Git repository before execution.
+5. Add `Beast Ready` only when execution is authorized and the task contract is complete.
+6. Linear sends the issue event to Beast API.
+7. Beast validates the webhook and authorizes either issue creation with the ready label or an update that newly adds it.
 8. The job is persisted as queued. Beast attempts a **Queued** comment.
-9. The worker validates the workspace. A dirty, missing, unregistered, or unsafe workspace is blocked.
-10. Beast attempts **Working** before launching the agent; this is not proof that a process started.
-11. A fresh agent process (Codex or Claude Code, per `BEAST_AGENT`) works only inside the validated workspace.
-12. Beast inspects the result and runs configured verification scripts.
-13. Beast attempts **Completed locally**, **Completed locally — verification failed**, **Blocked**, or **Failed**, including a Next Action. Delivery is best-effort.
+9. The worker validates workspace safety. A missing, unregistered, unsafe, or repository-mismatched workspace is blocked. Dirty-workspace behavior depends on the currently deployed execution model and must never discard unrelated work.
+10. Beast may attempt **Working** before launching the agent. This is not proof that a process started.
+11. A fresh configured coding-agent process works inside the validated execution boundary.
+12. Beast inspects the result and runs configured verification.
+13. Beast reports the local result and a Next Action.
 
 ## Authorization behavior
 
-The `Beast Ready` label is an execution authorization gate, not a general status label. Editing an issue that already carries the label does not re-run it. To intentionally retry a blocked or failed issue, remove the label and add it again after the blocker is resolved.
+The `Beast Ready` label is an execution authorization gate, not a general status label. Editing an issue that already carries the label does not re-run it. To intentionally retry a blocked or failed issue, remove the label and add it again after the blocker is resolved and the task is still approved.
 
 A valid webhook without an authorized create or ready-label addition does not launch an agent.
 
-## Project mapping
+## Workspace resolution
 
-Project selection is exact. Beast does not guess from the issue title, repository name, or filesystem. Unknown or missing Linear projects are blocked.
+Canonical resolution precedence is:
+
+1. Explicit `Beast workspace:` directive in the issue.
+2. Registered repository/workspace mapping.
+3. Linear project default workspace when the first two do not select a target.
+4. Unknown or ambiguous target → BLOCK.
+
+Beast must not guess from the issue title, repository name, or filesystem. Before launching an agent, the resolved workspace must match the expected registered Git repository identity. A mismatch must block execution.
 
 The default registry is versioned in `config/projects.json`; `BEAST_PROJECTS_FILE` can select another file. Confirm the active registry before production work.
 
-**Beast API routing:** The shipped Beast project maps to `/home/ubuntu/projects/beast`, the VPS documentation repository. It does not select Beast API source. Clean-workspace checks do not detect this mismatch.
-
-Before re-adding Beast Ready for API coding, verify the intended clean development checkout under the workspace root and obtain approval for the exact routing change. Do not guess a checkout, use the production runtime copy, or redirect all Beast documentation/operations tasks. [IDE-65](https://linear.app/ideahub-devkofi/issue/IDE-65) tracks this prerequisite.
+**Beast API routing:** the shipped Beast project mapping historically selected `/home/ubuntu/projects/beast`, the VPS documentation repository, rather than Beast API source. Clean-workspace checks alone do not detect repository-identity mistakes. IDE-100 tracks the permanent workspace-routing and repository-identity fix. Do not guess a checkout or silently redirect documentation tasks.
 
 ## What ordinary Beast Ready execution may do
 
-The current workflow is for local repository work: edit files in the registered clean workspace and run verification.
+`Beast Ready` authorizes only the bounded operations defined in the approved task contract and currently supported by Beast. It does not by itself authorize push, pull-request creation, merge, deployment, destructive Git operations, DNS, firewall, Nginx, PM2/system-service changes, scheduled production changes, deletion, or reboot. Those require separate explicit approval.
 
-It does not authorize Git push, pull-request creation, merge, deployment, destructive Git operations, DNS, firewall, Nginx, PM2/system-service changes, or other production changes. Those require a separate explicitly approved workflow.
+## Operational states vs API job states
+
+The canonical operational states are:
+
+- REQUESTED — task prepared.
+- QUEUED — Beast API accepted the job.
+- RUNNING — an agent process actually started.
+- VERIFIED — required verification actually ran and passed.
+- DONE — verified, profile reconciled if required, and Linear completed.
+- BLOCKED/FAILED — Beast could not safely or successfully complete the task.
+
+Beast API internal states such as `queued`, `working`, `blocked`, `failed`, and `completed` are implementation details. Do not treat `working` as RUNNING unless process start is confirmed. Do not treat `completed` as VERIFIED or DONE unless the required checks and acceptance criteria actually passed.
 
 ## Reporting
 
-Comments target the originating Linear issue, but are best-effort. Queued is not awaited, so delivery order is not guaranteed. Working is attempted after workspace validation and before launch; a launch failure can follow its "started" message. Failures to post are logged without a persisted retry. With no Linear API key, no comments are sent.
-
-If a comment is missing, inspect local `GET /jobs/:id`, `data/state.json` (under the configured data directory), and PM2 logs before retrying. This version does not update Linear states/labels or send messages into ChatGPT.
+Comments target the originating Linear issue, but are best-effort. Queued may not be awaited, so delivery order is not guaranteed. A Working comment may be attempted before launch and therefore does not prove an agent process started. Failures to post must not be mistaken for missing execution; use authoritative job/runtime evidence.
 
 ### What completed and passed mean
 
-A successful agent exit without an agent error, timeout or cancellation produces a completed job even if verification fails. The plain-text summary is not validated against acceptance criteria; an incomplete result can therefore be labelled completed.
+A successful agent exit is not automatically task success. The agent summary must be checked against the task requirements and acceptance criteria.
 
-Missing package metadata, scripts or dependencies produce skipped checks. Skipped checks count as passing, so "Overall: passed" can mean no checks ran. HEAD movement only produces a warning; the result's "nothing was committed" template is not proof of agent compliance.
+A skipped verification check is not evidence that its requirement passed. If required tests, lint, typecheck, build, health checks, or other acceptance checks did not actually run and pass, do not claim VERIFIED.
 
-Inspect the final diff, agent summary, actual checks and acceptance criteria before accepting the result. Local completion does not mean task success, Linear Done, merge or deployment. IDE-65 owns the pending lifecycle fixes.
+Inspect the final diff, agent result, actual checks and acceptance criteria before accepting the result. Local completion does not mean task success, Linear Done, merge or deployment.
 
-Keep verified results and next actions in Linear rather than treating chat history as the primary work record.
+Keep verified results and the exact Next Action in Linear rather than treating chat history as the primary work record.
